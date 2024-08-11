@@ -8,8 +8,10 @@ use std::sync::{Arc, Mutex};
 use tokio::net::unix::SocketAddr;
 use tokio::task;
 use crate::health_connection::HealthConnection;
+use crate::messages::AddNode;
 
 mod health_connection;
+mod messages;
 
 #[actix_rt::main]
 async fn main() {
@@ -41,6 +43,16 @@ async fn main() {
                     println!("Connections: {:?}", connection_map_clone.lock());
                     next_id += 1;
                 }
+                if !connection_map_clone.lock().unwrap().is_empty() {
+                    let hashmap = connection_map_clone.lock().unwrap();
+                    for (id, connection) in hashmap.iter() {
+                        for (id_actor, to_send) in hashmap.iter() {
+                            if id_actor != id {
+                                connection.send(AddNode {id: id_actor.clone(), node: to_send.clone()}).await.expect("Error sending AddNode");
+                            }
+                        }
+                    }
+                }
             }
         }).await;
     } else if id > 1 && id < total_nodes {
@@ -64,6 +76,7 @@ async fn main() {
             while next_id <= total_nodes {
                 if let Ok((stream, _)) = listener.accept().await {
                     let addr = HealthConnection::create_actor(stream, next_id);
+
                     connection_map_clone.lock().unwrap().insert(next_id, addr);
                     println!("Connection accepted with ID: {}", next_id);
                     next_id += 1;
