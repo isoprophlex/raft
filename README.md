@@ -1,5 +1,5 @@
 # raft
-Rusty raft
+Raft implementation written in Rust
 
 ## How to run
 In separate terminals, you can run a manual example of raft's implementation using the command `cargo run <node_name> <port>`.
