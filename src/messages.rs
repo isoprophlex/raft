@@ -14,3 +14,9 @@ pub struct AddNode {
 pub struct Coordinator {
     pub id: usize
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ConnectionDown {
+    pub id: usize
+}

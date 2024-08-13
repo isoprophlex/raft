@@ -3,8 +3,10 @@ use actix::{Addr};
 use std::collections::HashMap;
 use tokio::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::task;
-use crate::health_connection::HealthConnection;
+use tokio::time::sleep;
+use crate::health_connection::{HealthConnection, State};
 use crate::messages::{AddNode, Coordinator};
 
 mod health_connection;
@@ -34,7 +36,7 @@ async fn main() {
             // Accept every connection
             while next_id <= total_nodes {
                 if let Ok((stream, _)) = listener.accept().await {
-                    let addr = HealthConnection::create_actor(stream, next_id);
+                    let addr = HealthConnection::create_actor(stream, node_id, next_id, None);
                     connection_map_clone.lock().unwrap().insert(next_id, addr);
                     println!("Connection accepted with ID: {}", next_id);
                     println!("Connections: {:?}", connection_map_clone.lock());
@@ -59,7 +61,7 @@ async fn main() {
             println!("Node {} connected to Node {}", node_id, previous_id);
 
             // Crear actor para la conexión a cada nodo anterior
-            let actor_addr = HealthConnection::create_actor(stream, previous_id);
+            let actor_addr = HealthConnection::create_actor(stream, node_id, previous_id, None);
             connection_map.lock().unwrap().insert(previous_id, actor_addr);
             println!("Connections: {:?}", connection_map.lock());
         }
@@ -72,8 +74,7 @@ async fn main() {
             let mut next_id = node_id + 1;
             while next_id <= total_nodes {
                 if let Ok((stream, _)) = listener.accept().await {
-                    let addr = HealthConnection::create_actor(stream, next_id);
-
+                    let addr = HealthConnection::create_actor(stream, node_id, next_id, None);
                     connection_map_clone.lock().unwrap().insert(next_id, addr);
                     println!("Connection accepted with ID: {}", next_id);
                     next_id += 1;
@@ -98,7 +99,8 @@ async fn main() {
             println!("Node {} connected to Node {}", node_id, previous_id);
 
             // Crear actor para cada conexión
-            let actor_addr = HealthConnection::create_actor(stream, previous_id);
+            // State == Leader porque supongo que se inicializa al final el leader.
+            let actor_addr = HealthConnection::create_actor(stream, node_id, previous_id, Some(State::Leader));
             connection_map.lock().unwrap().insert(previous_id, actor_addr);
         }
         if !connection_map.lock().unwrap().is_empty() {
@@ -108,13 +110,11 @@ async fn main() {
                     if id_actor != id {
                         connection.send(AddNode {id: id_actor.clone(), node: to_send.clone()}).await.expect("Error sending AddNode");
                     }
-                    connection.send(Coordinator {id: node_id}).await.expect("Error sending initial coordinator");
                 }
+                connection.send(Coordinator {id: node_id}).await.expect("Error sending initial coordinator");
             }
         }
         // No aceptar conexiones
     }
-    loop {
-
-    }
+    sleep(Duration::from_secs(30)).await;
 }
