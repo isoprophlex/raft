@@ -1,5 +1,5 @@
 # raft
-Rusty raft
+Raft implementation written in Rust
 
 
 Implemented by:
