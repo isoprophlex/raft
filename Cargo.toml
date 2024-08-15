@@ -22,3 +22,4 @@ sysinfo = "0.30.13"
 actix = "0.13.5"
 actix-rt = "2.0"
 tokio-stream = { version = "^0.1.14", features = ["io-util"] }
+rand = "0.8.5"

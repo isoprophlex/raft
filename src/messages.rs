@@ -20,3 +20,9 @@ pub struct Coordinator {
 pub struct ConnectionDown {
     pub id: usize
 }
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct StartElection {
+    pub id: usize,
+    pub term: usize
+}

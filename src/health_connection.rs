@@ -8,50 +8,48 @@ use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use actix::fut::wrap_future;
 use tokio::io::{AsyncBufReadExt, split, BufReader};
 use tokio_stream::wrappers::LinesStream;
-use crate::messages::{AddNode, Coordinator, ConnectionDown};
+use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
 };
 
-/// Raft RPCs
-pub enum RPC {
-    RequestVotes,
-    AppendEntries
-}
-pub enum State {
-    Follower,
-    Leader,
-    Candidate
-}
+
 pub struct HealthConnection {
     write: Option<WriteHalf<TcpStream>>,
     id_connection: Option<usize>,
     id_node: Option<usize>,
     other_actors: HashMap<usize, Addr<HealthConnection>>,
-    current_state: Option<State>
 }
 impl Actor for HealthConnection {
     type Context = Context<Self>;
 }
 impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
     fn handle(&mut self, read: Result<String, std::io::Error>, ctx: &mut Self::Context) {
-        match read {
-            Ok(line) => {
-                println!("[CONNECTION WITH {}] Received: {}", self.id_connection.unwrap(), line);
-                self.make_response("ACK".to_string(), ctx);
-            }
-            Err(_) => {
-                println!("[ACTOR {}] Connection lost", self.id_connection.unwrap());
-                // Notificar a otros actores que la conexión se ha caído
-                let id = self.id_connection.unwrap();
-                for (notifying, actor) in &self.other_actors {
-                    println!("SENDING TO ACTOR: {}", notifying);
-                    actor.do_send(ConnectionDown { id });
+        if let Ok(line) = read {
+            let mut words = line.split_whitespace();
+            match words.next() {
+                Some("RV") => {
+                    if let (Some(Ok(candidate_node)), Some(Ok(term))) = (
+                        words.next().map(|w| w.parse::<u16>()),
+                        words.next().map(|w| w.parse::<u16>()),
+                    ) {
+                        println!("[CONNECTION {:?}] Requested my vote on term {}", self.id_connection, term);
+                    }
                 }
-                // Detener el actor actual
-                ctx.stop();
+                _ => {
+                    println!("[CONNECTION {:?}] MESSAGE RECEIVED: {:?}", self.id_connection, line)
+                }
             }
+        }
+        else {
+            println!("[ACTOR {}] Connection lost", self.id_connection.unwrap());
+            let id = self.id_connection.unwrap();
+            for (notifying, actor) in &self.other_actors {
+                println!("SENDING TO ACTOR: {}", notifying);
+                actor.do_send(ConnectionDown { id });
+            }
+            ctx.stop();
         }
     }
 }
@@ -59,9 +57,9 @@ impl Handler<AddNode> for HealthConnection {
     type Result = ();
 
     fn handle(&mut self, msg: AddNode, ctx: &mut Self::Context) -> Self::Result {
-        println!("[ACTOR {:?}] Added connection with: {}", self.id_connection, msg.id);
+        println!("[ACTOR {}] Added connection with: {}", self.id_connection.unwrap(), msg.id);
         self.other_actors.insert(msg.id, msg.node);
-        println!("Actors connected: {:?}", self.other_actors);
+        //DEBUG: println!("Actors connected: {:?}", self.other_actors);
     }
 }
 impl Handler<Coordinator> for HealthConnection {
@@ -81,8 +79,16 @@ impl Handler<ConnectionDown> for HealthConnection {
         println!("Actor {} deleted", msg.id);
     }
 }
+impl Handler<StartElection> for HealthConnection {
+    type Result = ();
+
+    fn handle(&mut self, msg: StartElection, ctx: &mut Self::Context) -> Self::Result {
+        println!("Requesting vote of: {}" ,self.id_connection.unwrap());
+        self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
+    }
+}
 impl HealthConnection {
-    pub fn create_actor(stream: TcpStream,  self_id: usize, id_connection: usize, initial_state : Option<State>) -> Addr<HealthConnection> {
+    pub fn create_actor(stream: TcpStream,  self_id: usize, id_connection: usize) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
             let (read_half, write_half) = split(stream);
             HealthConnection::add_stream(LinesStream::new(BufReader::new(read_half).lines()), ctx);
@@ -91,19 +97,14 @@ impl HealthConnection {
                 id_connection: Some(id_connection),
                 id_node: Some(self_id),
                 other_actors: HashMap::new(),
-                current_state: initial_state,
             }
         })
     }
 
     fn make_response(&mut self, response: String, ctx: &mut Context<Self>) {
-        println!("[ACTOR {}] RESPONSE {} ", self.id_connection.unwrap(), response);
-
-        // Extraemos el write fuera del futuro para evitar problemas de lifetime
         let mut write = self.write.take().expect("[ERROR] - NEW MESSAGE RECEIVED");
         let id = self.id_connection.unwrap();
-        let other_actors = self.other_actors.clone(); // Clonamos el mapa para usarlo dentro del futuro
-
+        let other_actors = self.other_actors.clone();
         wrap_future::<_, Self>(async move {
             match write.write_all(format!("{}\n", response).as_bytes()).await {
                 Ok(_) => Ok(write),
@@ -116,11 +117,9 @@ impl HealthConnection {
             .map(move |result, this, ctx| {
                 match result {
                     Ok(write) => {
-                        // Restauramos write en self.write si no hubo errores
                         this.write = Some(write);
                     }
                     Err(_) => {
-                        // Notificamos a otros actores de la caída de la conexión
                         for (other_id, actor) in &other_actors {
                             actor.do_send(ConnectionDown { id });
                         }
@@ -130,7 +129,4 @@ impl HealthConnection {
             })
             .wait(ctx);
     }
-
-
-
 }
