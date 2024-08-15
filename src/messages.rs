@@ -26,3 +26,9 @@ pub struct StartElection {
     pub id: usize,
     pub term: usize
 }
+
+#[derive(Message)]
+#[rtype(result = "usize")]
+pub struct CountVotes {
+    pub term: usize
+}

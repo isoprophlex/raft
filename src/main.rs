@@ -30,7 +30,7 @@ async fn main() {
     // First node only accepts
    let mut backend = Backend::start_connections(node_id, total_nodes, port).await;
     if node_id == total_nodes {
-        let _ = backend.start_election().await;
+        backend.run_election_timer().await;
     }
     sleep(Duration::from_secs(15)).await;
 }

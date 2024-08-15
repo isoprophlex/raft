@@ -8,7 +8,7 @@ use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use actix::fut::wrap_future;
 use tokio::io::{AsyncBufReadExt, split, BufReader};
 use tokio_stream::wrappers::LinesStream;
-use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection};
+use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection, CountVotes};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
@@ -20,6 +20,7 @@ pub struct HealthConnection {
     id_connection: Option<usize>,
     id_node: Option<usize>,
     other_actors: HashMap<usize, Addr<HealthConnection>>,
+    votes_earned: usize
 }
 impl Actor for HealthConnection {
     type Context = Context<Self>;
@@ -87,6 +88,13 @@ impl Handler<StartElection> for HealthConnection {
         self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
     }
 }
+impl Handler<CountVotes> for HealthConnection {
+    type Result = usize;
+
+    fn handle(&mut self, msg: CountVotes, ctx: &mut Self::Context) -> Self::Result {
+        self.votes_earned
+    }
+}
 impl HealthConnection {
     pub fn create_actor(stream: TcpStream,  self_id: usize, id_connection: usize) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
@@ -97,6 +105,7 @@ impl HealthConnection {
                 id_connection: Some(id_connection),
                 id_node: Some(self_id),
                 other_actors: HashMap::new(),
+                votes_earned: 0
             }
         })
     }
@@ -120,7 +129,7 @@ impl HealthConnection {
                         this.write = Some(write);
                     }
                     Err(_) => {
-                        for (other_id, actor) in &other_actors {
+                        for (_, actor) in &other_actors {
                             actor.do_send(ConnectionDown { id });
                         }
                         ctx.stop();
