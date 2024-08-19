@@ -8,11 +8,12 @@ use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use actix::fut::wrap_future;
 use tokio::io::{AsyncBufReadExt, split, BufReader};
 use tokio_stream::wrappers::LinesStream;
-use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection, CountVotes};
+use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection, AddBackend, Vote, Heartbeat, UpdateTerm};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
 };
+use crate::backend::ConsensusModule;
 
 
 pub struct HealthConnection {
@@ -20,7 +21,9 @@ pub struct HealthConnection {
     id_connection: Option<usize>,
     id_node: Option<usize>,
     other_actors: HashMap<usize, Addr<HealthConnection>>,
-    votes_earned: usize
+    votes_earned: usize,
+    backend_actor: Option<Addr<ConsensusModule>>,
+    current_term: usize
 }
 impl Actor for HealthConnection {
     type Context = Context<Self>;
@@ -35,7 +38,21 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         words.next().map(|w| w.parse::<u16>()),
                         words.next().map(|w| w.parse::<u16>()),
                     ) {
-                        println!("[CONNECTION {:?}] Requested my vote on term {}", self.id_connection, term);
+                        println!("CONNECTION {} REQUESTED MY VOTE", self.id_connection.unwrap());
+                    }
+                }
+                Some("VOTE") =>{
+                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>())
+                     {
+                        println!("[CONNECTION {:?}] VOTED ME ON TERM {}", self.id_connection, term);
+                         self.backend_actor.clone().unwrap().try_send(Vote { id: self.id_connection.unwrap(), term: term.into() }).expect("Error sending vote");
+                    }
+                }
+                Some("HB") =>{
+                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>())
+                    {
+                        println!("[CONNECTION {:?}] HEARTBEAT ARRIVED ON TERM {}", self.id_connection, term);
+                        self.make_response(format!("ACK {}", self.current_term), ctx);
                     }
                 }
                 _ => {
@@ -60,7 +77,13 @@ impl Handler<AddNode> for HealthConnection {
     fn handle(&mut self, msg: AddNode, ctx: &mut Self::Context) -> Self::Result {
         println!("[ACTOR {}] Added connection with: {}", self.id_connection.unwrap(), msg.id);
         self.other_actors.insert(msg.id, msg.node);
-        //DEBUG: println!("Actors connected: {:?}", self.other_actors);
+    }
+}
+impl Handler<AddBackend> for HealthConnection {
+    type Result = ();
+
+    fn handle(&mut self, msg: AddBackend, ctx: &mut Self::Context) -> Self::Result {
+        self.backend_actor = Some(msg.node);
     }
 }
 impl Handler<Coordinator> for HealthConnection {
@@ -88,11 +111,18 @@ impl Handler<StartElection> for HealthConnection {
         self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
     }
 }
-impl Handler<CountVotes> for HealthConnection {
-    type Result = usize;
+impl Handler<Heartbeat> for HealthConnection {
+    type Result = ();
 
-    fn handle(&mut self, msg: CountVotes, ctx: &mut Self::Context) -> Self::Result {
-        self.votes_earned
+    fn handle(&mut self, msg: Heartbeat, ctx: &mut Self::Context) -> Self::Result {
+        self.make_response(format!("HB {}", msg.term), ctx);
+    }
+}
+impl Handler<UpdateTerm> for HealthConnection {
+    type Result = ();
+
+    fn handle(&mut self, msg: UpdateTerm, ctx: &mut Self::Context) -> Self::Result {
+        self.current_term = msg.term;
     }
 }
 impl HealthConnection {
@@ -105,7 +135,9 @@ impl HealthConnection {
                 id_connection: Some(id_connection),
                 id_node: Some(self_id),
                 other_actors: HashMap::new(),
-                votes_earned: 0
+                votes_earned: 0,
+                backend_actor: None,
+                current_term: 0
             }
         })
     }

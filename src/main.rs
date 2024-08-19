@@ -1,12 +1,12 @@
 use std::env;
-use actix::{Addr};
+use actix::{Actor, Addr};
 use std::collections::HashMap;
 use tokio::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::task;
 use tokio::time::sleep;
-use crate::backend::Backend;
+use crate::backend::ConsensusModule;
 use crate::health_connection::{HealthConnection};
 use crate::messages::{AddNode, Coordinator};
 
@@ -28,7 +28,8 @@ async fn main() {
     let port = node_id + 8000;
 
     // First node only accepts
-   let mut backend = Backend::start_connections(node_id, total_nodes, port).await;
+   let mut backend = ConsensusModule::start_connections(node_id, total_nodes, port).await;
+   backend.add_me_to_connections(backend.clone().start()).await;
     if node_id == total_nodes {
         backend.run_election_timer().await;
     }
