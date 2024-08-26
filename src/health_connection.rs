@@ -8,7 +8,7 @@ use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use actix::fut::wrap_future;
 use tokio::io::{AsyncBufReadExt, split, BufReader};
 use tokio_stream::wrappers::LinesStream;
-use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection, AddBackend, Vote, Heartbeat, UpdateTerm};
+use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection, AddBackend, Vote, Heartbeat, UpdateTerm, RequestedOurVote, RequestAnswer};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
@@ -39,6 +39,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         words.next().map(|w| w.parse::<u16>()),
                     ) {
                         println!("CONNECTION {} REQUESTED MY VOTE", self.id_connection.unwrap());
+                        _ = self.check_if_voted(term as usize, ctx);
                     }
                 }
                 Some("VOTE") =>{
@@ -54,6 +55,9 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         println!("[CONNECTION {:?}] HEARTBEAT ARRIVED ON TERM {}", self.id_connection, term);
                         self.make_response(format!("ACK {}", self.current_term), ctx);
                     }
+                }
+                Some("NO") => {
+                    println!("NODE {} DIDN'T VOTE ME", self.id_connection.unwrap());
                 }
                 _ => {
                     println!("[CONNECTION {:?}] MESSAGE RECEIVED: {:?}", self.id_connection, line)
@@ -125,6 +129,12 @@ impl Handler<UpdateTerm> for HealthConnection {
         self.current_term = msg.term;
     }
 }
+impl Handler<RequestAnswer> for HealthConnection {
+    type Result = ();
+    fn handle(&mut self, msg: RequestAnswer, ctx: &mut Self::Context) -> Self::Result {
+        self.make_response(format!("{} {}",msg.msg, self.current_term), ctx);
+    }
+}
 impl HealthConnection {
     pub fn create_actor(stream: TcpStream,  self_id: usize, id_connection: usize) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
@@ -169,5 +179,8 @@ impl HealthConnection {
                 }
             })
             .wait(ctx);
+    }
+    pub fn check_if_voted(&mut self, term: usize, ctx:&mut Context<Self>) {
+        let mut answer = self.backend_actor.clone().unwrap().try_send(RequestedOurVote { term, candidate_id: self.id_connection.unwrap()}).unwrap();
     }
 }

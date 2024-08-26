@@ -51,3 +51,15 @@ pub struct UpdateTerm {
 pub struct Heartbeat {
     pub term: usize
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RequestedOurVote {
+    pub term: usize,
+    pub candidate_id: usize
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RequestAnswer {
+    pub msg: String
+}
