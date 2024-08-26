@@ -8,7 +8,7 @@ use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use actix::fut::wrap_future;
 use tokio::io::{AsyncBufReadExt, split, BufReader};
 use tokio_stream::wrappers::LinesStream;
-use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection, AddBackend, Vote, Heartbeat, UpdateTerm, RequestedOurVote, RequestAnswer};
+use crate::messages::{AddNode, Coordinator, ConnectionDown, StartElection, AddBackend, Vote, Heartbeat, UpdateTerm, RequestedOurVote, RequestAnswer, No};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
@@ -57,7 +57,11 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 Some("NO") => {
-                    println!("NODE {} DIDN'T VOTE ME", self.id_connection.unwrap());
+                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>())
+                    {
+                        println!("[CONNECTION {:?}] DIDNT VOTE US {}", self.id_connection, term);
+                        self.backend_actor.clone().unwrap().try_send(No { term }).expect("Error sending NO to CM");
+                    }
                 }
                 _ => {
                     println!("[CONNECTION {:?}] MESSAGE RECEIVED: {:?}", self.id_connection, line)

@@ -63,3 +63,8 @@ pub struct RequestedOurVote {
 pub struct RequestAnswer {
     pub msg: String
 }
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct No {
+    pub term: u16
+}

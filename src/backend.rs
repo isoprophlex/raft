@@ -8,7 +8,7 @@ use tokio::task;
 use tokio::time::{Instant, sleep};
 use crate::backend::State::Follower;
 use crate::health_connection::{HealthConnection};
-use crate::messages::{AddBackend, AddNode, Coordinator, Heartbeat, RequestAnswer, RequestedOurVote, StartElection, Vote};
+use crate::messages::{AddBackend, AddNode, Coordinator, Heartbeat, No, RequestAnswer, RequestedOurVote, StartElection, Vote};
 /// Raft RPCs
 #[derive(Clone)]
 pub enum State {
@@ -200,7 +200,7 @@ impl ConsensusModule {
         self.state = State::Leader;
         println!("Node {} becomes Leader; term={}", self.node_id, self.current_term);
 
-        ctx.run_interval(Duration::from_millis(50), |actor, _ctx| {
+        ctx.run_interval(Duration::from_millis(1000), |actor, _ctx| {
             let current_term = actor.current_term;
             for (_id, connection) in actor.connection_map.lock().unwrap().iter_mut() {
                 connection.try_send(Heartbeat { term: current_term }).unwrap();
@@ -219,6 +219,13 @@ impl ConsensusModule {
             connection.try_send(Heartbeat { term: current_term}).unwrap();
         }
     }
+    pub async fn become_follower(&mut self, new_term: usize) {
+        println!("NODE {} became follower at term {}", self.node_id, new_term);
+        self.state = State::Follower;
+        self.current_term = new_term;
+        self.election_reset_event = Instant::now();
+        self.run_election_timer().await;
+    }
 }
 impl Handler<Vote> for ConsensusModule {
     type Result = ();
@@ -233,6 +240,20 @@ impl Handler<Vote> for ConsensusModule {
             return;
         } else if vote_term == self.current_term {
             self.check_votes(_ctx);
+        }
+    }
+}
+impl Handler<No> for ConsensusModule {
+    type Result = ();
+
+    fn handle(&mut self, msg: No, _ctx: &mut Self::Context) -> Self::Result {
+        let vote_term = msg.term;
+        println!("Received NO in term {}", msg.term);
+
+        if vote_term > self.current_term as u16 {
+            println!("I'm out of date, now I become a follower.");
+            self.state = State::Follower;
+            return;
         }
     }
 }
