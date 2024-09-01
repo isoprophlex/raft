@@ -2,13 +2,13 @@ use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Message};
+use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task;
 use tokio::time::{Instant, sleep};
 use crate::backend::State::Follower;
 use crate::health_connection::{HealthConnection};
-use crate::messages::{AddBackend, AddNode, Coordinator, Heartbeat, No, RequestAnswer, RequestedOurVote, StartElection, Vote};
+use crate::messages::{AddBackend, AddNode, ConnectionDown, Heartbeat, No, RequestAnswer, RequestedOurVote, StartElection, Vote};
 /// Raft RPCs
 #[derive(Clone)]
 pub enum State {
@@ -139,7 +139,7 @@ impl ConsensusModule {
 
 
     }
-    pub async fn start_election(&mut self) {
+    pub fn start_election(&mut self) {
         println!("Node {} starting election at term {}", self.node_id, self.current_term);
         self.state = State::Candidate;
         self.current_term += 1;
@@ -150,15 +150,14 @@ impl ConsensusModule {
         let mut lock = self.connection_map.lock().unwrap();
         let iterator = lock.iter_mut();
         for (_, actor) in iterator {
-            actor.send(StartElection { id: self.node_id, term: self.current_term }).await.expect("Error starting election");
+            actor.try_send(StartElection { id: self.node_id, term: self.current_term }).expect("Error starting election");
         }
     }
-    pub async fn run_election_timer(&mut self) {
+    pub fn run_election_timer(&mut self) {
         let timeout_duration = self.election_timeout();
         let term_started = self.current_term;
         println!("[NODE {}] ELECTION TIMER STARTED {}, TERM: {}", self.node_id, timeout_duration.as_millis(), term_started);
         loop {
-            sleep(Duration::from_millis(10)).await;
             if self.state != State::Candidate && self.state != Follower {
                 println!("[NODE {}] I'M THE CURRENT LEADER", self.node_id);
                 return;
@@ -170,7 +169,7 @@ impl ConsensusModule {
             let elapsed = Instant::now().duration_since(self.election_reset_event);
             println!("ELAPSED: {}", elapsed.as_millis());
             if elapsed >= timeout_duration {
-                self.start_election().await;
+                self.start_election();
                 return;
             }
         }
@@ -202,8 +201,21 @@ impl ConsensusModule {
 
         ctx.run_interval(Duration::from_millis(1000), |actor, _ctx| {
             let current_term = actor.current_term;
-            for (_id, connection) in actor.connection_map.lock().unwrap().iter_mut() {
-                connection.try_send(Heartbeat { term: current_term }).unwrap();
+
+            let connections: Vec<_> = actor.connection_map.lock().unwrap().iter().map(|(id, conn)| (*id, conn.clone())).collect();
+
+            for (id, connection) in connections {
+                match connection.try_send(Heartbeat { term: current_term }) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        println!("[ACTOR] Error sending Heartbeat to connection {}: {}", id, e);
+
+                        actor.connection_map.lock().unwrap().remove(&id);
+                        for (notifying_id, notifying_actor) in actor.connection_map.lock().unwrap().iter() {
+                            let _ = notifying_actor.try_send(ConnectionDown { id });
+                        }
+                    }
+                }
             }
 
             if actor.state != State::Leader {
@@ -212,19 +224,12 @@ impl ConsensusModule {
             }
         });
     }
-
-    pub fn leader_heartbeats(&mut self) {
-        let current_term = self.current_term.clone();
-        for (_id, connection) in self.connection_map.lock().unwrap().iter_mut() {
-            connection.try_send(Heartbeat { term: current_term}).unwrap();
-        }
-    }
     pub async fn become_follower(&mut self, new_term: usize) {
         println!("NODE {} became follower at term {}", self.node_id, new_term);
         self.state = State::Follower;
         self.current_term = new_term;
         self.election_reset_event = Instant::now();
-        self.run_election_timer().await;
+        self.run_election_timer();
     }
 }
 impl Handler<Vote> for ConsensusModule {
@@ -257,6 +262,15 @@ impl Handler<No> for ConsensusModule {
         }
     }
 }
+impl Handler<ConnectionDown> for ConsensusModule {
+    type Result = ();
+
+    fn handle(&mut self, msg: ConnectionDown, _ctx: &mut Self::Context) -> Self::Result {
+        println!("Actor {} deleted", msg.id);
+        let mut lock = self.connection_map.lock().unwrap();
+        lock.remove_entry(&msg.id);
+    }
+}
 impl Handler<RequestedOurVote> for ConsensusModule {
     type Result = ();
 
@@ -266,18 +280,18 @@ impl Handler<RequestedOurVote> for ConsensusModule {
         if self.last_vote.is_none() {
             println!("First election!");
             self.last_vote = Some(msg.term);
-            let mut lock = self.connection_map.lock().unwrap();
+            let lock = self.connection_map.lock().unwrap();
             let actor = lock.get(&msg.candidate_id).unwrap();
             actor.try_send(RequestAnswer {msg: "VOTE".to_string()}).expect("Error sending VOTE HIM to connection");
         }
         else if vote_term > self.current_term {
            println!("I have to vote!");
-            let mut lock = self.connection_map.lock().unwrap();
+            let lock = self.connection_map.lock().unwrap();
             let actor = lock.get(&msg.candidate_id).unwrap();
             actor.try_send(RequestAnswer {msg: "VOTE".to_string()}).expect("Error sending VOTE HIM to connection");
         } else if vote_term == self.current_term {
             println!("I have already voted!");
-            let mut lock = self.connection_map.lock().unwrap();
+            let lock = self.connection_map.lock().unwrap();
             let actor = lock.get(&msg.candidate_id).unwrap();
             actor.try_send(RequestAnswer {msg: "NO".to_string()}).expect("Error sending VOTE HIM to connection");
         }

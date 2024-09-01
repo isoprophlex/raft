@@ -2,7 +2,6 @@ extern crate actix;
 use actix::prelude::*;
 
 use std::collections::HashMap;
-use std::thread::sleep;
 use std::time::Duration;
 use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use actix::fut::wrap_future;
@@ -32,6 +31,9 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
     fn handle(&mut self, read: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(line) = read {
             let mut words = line.split_whitespace();
+/*            ctx.run_later(Duration::from_secs(10), move |act, ctx| {
+                act.handle_timeout(ctx);
+            });*/
             match words.next() {
                 Some("RV") => {
                     if let (Some(Ok(candidate_node)), Some(Ok(term))) = (
@@ -70,12 +72,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
         }
         else {
             println!("[ACTOR {}] Connection lost", self.id_connection.unwrap());
-            let id = self.id_connection.unwrap();
-            for (notifying, actor) in &self.other_actors {
-                println!("SENDING TO ACTOR: {}", notifying);
-                actor.do_send(ConnectionDown { id });
-            }
-            ctx.stop();
+            self.handle_disconnect(ctx);
         }
     }
 }
@@ -159,7 +156,6 @@ impl HealthConnection {
     fn make_response(&mut self, response: String, ctx: &mut Context<Self>) {
         let mut write = self.write.take().expect("[ERROR] - NEW MESSAGE RECEIVED");
         let id = self.id_connection.unwrap();
-        let other_actors = self.other_actors.clone();
         wrap_future::<_, Self>(async move {
             match write.write_all(format!("{}\n", response).as_bytes()).await {
                 Ok(_) => Ok(write),
@@ -175,16 +171,29 @@ impl HealthConnection {
                         this.write = Some(write);
                     }
                     Err(_) => {
-                        for (_, actor) in &other_actors {
-                            actor.do_send(ConnectionDown { id });
-                        }
-                        ctx.stop();
+                        println!("HOLAAA");
+                        this.handle_disconnect(ctx);
                     }
                 }
             })
             .wait(ctx);
     }
     pub fn check_if_voted(&mut self, term: usize, ctx:&mut Context<Self>) {
-        let mut answer = self.backend_actor.clone().unwrap().try_send(RequestedOurVote { term, candidate_id: self.id_connection.unwrap()}).unwrap();
+        let answer = self.backend_actor.clone().unwrap().try_send(RequestedOurVote { term, candidate_id: self.id_connection.unwrap()}).unwrap();
+    }
+    fn handle_timeout(&mut self, ctx: &mut Context<Self>) {
+        println!("[ACTOR {}] Connection timed out", self.id_connection.unwrap());
+        self.handle_disconnect(ctx);
+    }
+    fn handle_disconnect(&mut self, ctx: &mut Context<Self>) {
+        println!("[ACTOR {}] Connection lost", self.id_connection.unwrap());
+        let id = self.id_connection.unwrap();
+        for (notifying, actor) in &self.other_actors {
+            println!("SENDING TO ACTOR: {}", notifying);
+            actor.try_send(ConnectionDown { id }).unwrap_err();
+        }
+        if let Some(backend) = self.backend_actor.clone() {
+            backend.try_send(ConnectionDown { id }).unwrap();
+        }
     }
 }
