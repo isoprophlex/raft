@@ -8,7 +8,7 @@ use tokio::task;
 use tokio::time::{Instant, sleep};
 use crate::backend::State::Follower;
 use crate::health_connection::{HealthConnection};
-use crate::messages::{AddBackend, AddNode, ConnectionDown, Heartbeat, No, RequestAnswer, RequestedOurVote, StartElection, Vote};
+use crate::messages::{AddBackend, AddNode, ConnectionDown, Heartbeat, No, RequestAnswer, RequestedOurVote, StartElection, UpdateTerm, Vote};
 /// Raft RPCs
 #[derive(Clone)]
 pub enum State {
@@ -35,7 +35,8 @@ pub struct ConsensusModule {
     pub current_term: usize,
     pub election_reset_event: Instant,
     pub votes: Option<u16>,
-    pub last_vote: Option<usize>
+    pub last_vote: Option<usize>,
+    myself: Option<Addr<ConsensusModule>>
 }
 impl Actor for ConsensusModule {
     type Context = Context<Self>;
@@ -134,7 +135,8 @@ impl ConsensusModule {
             election_reset_event: Instant::now(),
             current_term: 0,
             votes: Some(0),
-            last_vote: None
+            last_vote: None,
+            myself: None
         }
 
 
@@ -142,8 +144,10 @@ impl ConsensusModule {
     pub fn start_election(&mut self) {
         println!("Node {} starting election at term {}", self.node_id, self.current_term);
         self.state = State::Candidate;
-        self.current_term += 1;
+        println!("CURRENT TERM BEFORE ELECTION {}", self.current_term);
         // Vote for myself.
+        self.update_term(UpdateTerm{term: self.current_term + 1});
+        println!("UPDATE TERM: {}", self.current_term);
         self.votes = Some(1);
         let save_current_term = self.current_term;
         self.election_reset_event = Instant::now();
@@ -201,23 +205,19 @@ impl ConsensusModule {
 
         ctx.run_interval(Duration::from_millis(1000), |actor, _ctx| {
             let current_term = actor.current_term;
-
             let connections: Vec<_> = actor.connection_map.lock().unwrap().iter().map(|(id, conn)| (*id, conn.clone())).collect();
-
             for (id, connection) in connections {
                 match connection.try_send(Heartbeat { term: current_term }) {
                     Ok(_) => {}
                     Err(e) => {
                         println!("[ACTOR] Error sending Heartbeat to connection {}: {}", id, e);
-
-                        actor.connection_map.lock().unwrap().remove(&id);
-                        for (notifying_id, notifying_actor) in actor.connection_map.lock().unwrap().iter() {
-                            let _ = notifying_actor.try_send(ConnectionDown { id });
+                        actor.connection_map.lock().unwrap().remove_entry(&id);
+                        for (_, notifying_actor) in actor.connection_map.lock().unwrap().iter() {
+                            let _ = notifying_actor.do_send(ConnectionDown { id });
                         }
                     }
                 }
             }
-
             if actor.state != State::Leader {
                 println!("Node {} is no longer the Leader", actor.node_id);
                 _ctx.stop();
@@ -231,6 +231,12 @@ impl ConsensusModule {
         self.election_reset_event = Instant::now();
         self.run_election_timer();
     }
+    pub fn update_term(&mut self, msg: UpdateTerm) {
+        self.myself.clone().unwrap().try_send(msg).unwrap();
+    }
+    pub fn add_myself(&mut self, myself: Addr<ConsensusModule>) {
+        self.myself = Option::from(myself);
+    }
 }
 impl Handler<Vote> for ConsensusModule {
     type Result = ();
@@ -238,7 +244,7 @@ impl Handler<Vote> for ConsensusModule {
     fn handle(&mut self, msg: Vote, _ctx: &mut Self::Context) -> Self::Result {
         let vote_term = msg.term;
         println!("Received vote from {} in term {}", msg.id, msg.term);
-
+        println!("My current term is {}", self.current_term);
         if vote_term > self.current_term {
             println!("I'm out of date, now I become a follower.");
             self.state = State::Follower;
@@ -271,6 +277,13 @@ impl Handler<ConnectionDown> for ConsensusModule {
         lock.remove_entry(&msg.id);
     }
 }
+impl Handler<UpdateTerm> for ConsensusModule {
+    type Result = ();
+
+    fn handle(&mut self, msg: UpdateTerm, _ctx: &mut Self::Context) -> Self::Result {
+        self.current_term = msg.term;
+    }
+}
 impl Handler<RequestedOurVote> for ConsensusModule {
     type Result = ();
 
@@ -282,18 +295,18 @@ impl Handler<RequestedOurVote> for ConsensusModule {
             self.last_vote = Some(msg.term);
             let lock = self.connection_map.lock().unwrap();
             let actor = lock.get(&msg.candidate_id).unwrap();
-            actor.try_send(RequestAnswer {msg: "VOTE".to_string()}).expect("Error sending VOTE HIM to connection");
+            actor.try_send(RequestAnswer {msg: "VOTE".to_string(), term: vote_term}).expect("Error sending VOTE HIM to connection");
         }
         else if vote_term > self.current_term {
            println!("I have to vote!");
             let lock = self.connection_map.lock().unwrap();
             let actor = lock.get(&msg.candidate_id).unwrap();
-            actor.try_send(RequestAnswer {msg: "VOTE".to_string()}).expect("Error sending VOTE HIM to connection");
+            actor.try_send(RequestAnswer {msg: "VOTE".to_string(), term: vote_term}).expect("Error sending VOTE HIM to connection");
         } else if vote_term == self.current_term {
             println!("I have already voted!");
             let lock = self.connection_map.lock().unwrap();
             let actor = lock.get(&msg.candidate_id).unwrap();
-            actor.try_send(RequestAnswer {msg: "NO".to_string()}).expect("Error sending VOTE HIM to connection");
+            actor.try_send(RequestAnswer {msg: "NO".to_string(), term: self.current_term}).expect("Error sending VOTE HIM to connection");
         }
     }
 }

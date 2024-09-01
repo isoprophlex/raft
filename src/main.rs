@@ -23,7 +23,9 @@ async fn main() {
 
     // First node only accepts
    let mut backend = ConsensusModule::start_connections(node_id, total_nodes, port).await;
-   backend.add_me_to_connections(backend.clone().start()).await;
+    let clone = backend.clone().start();
+    backend.add_myself(clone.clone());
+   backend.add_me_to_connections(clone).await;
     if node_id == total_nodes {
         backend.run_election_timer();
     }

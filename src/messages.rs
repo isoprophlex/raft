@@ -61,7 +61,8 @@ pub struct RequestedOurVote {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct RequestAnswer {
-    pub msg: String
+    pub msg: String,
+    pub term: usize
 }
 #[derive(Message)]
 #[rtype(result = "()")]

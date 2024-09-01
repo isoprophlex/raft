@@ -40,7 +40,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         words.next().map(|w| w.parse::<u16>()),
                         words.next().map(|w| w.parse::<u16>()),
                     ) {
-                        println!("CONNECTION {} REQUESTED MY VOTE", self.id_connection.unwrap());
+                        println!("CONNECTION {} REQUESTED MY VOTE ON TERM {}", self.id_connection.unwrap(), term);
                         _ = self.check_if_voted(term as usize, ctx);
                     }
                 }
@@ -112,7 +112,7 @@ impl Handler<StartElection> for HealthConnection {
     type Result = ();
 
     fn handle(&mut self, msg: StartElection, ctx: &mut Self::Context) -> Self::Result {
-        println!("Requesting vote of: {}" ,self.id_connection.unwrap());
+        println!("Requesting vote of: {} on term {}" ,self.id_connection.unwrap(), msg.term);
         self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
     }
 }
@@ -133,7 +133,9 @@ impl Handler<UpdateTerm> for HealthConnection {
 impl Handler<RequestAnswer> for HealthConnection {
     type Result = ();
     fn handle(&mut self, msg: RequestAnswer, ctx: &mut Self::Context) -> Self::Result {
-        self.make_response(format!("{} {}",msg.msg, self.current_term), ctx);
+        self.current_term = msg.term.clone();
+        println!("[CONNECTION {}]Term updated to {}", self.id_connection.unwrap(), self.current_term);
+        self.make_response(format!("{} {}",msg.msg, msg.term), ctx);
     }
 }
 impl HealthConnection {
