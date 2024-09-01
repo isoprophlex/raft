@@ -31,9 +31,6 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
     fn handle(&mut self, read: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(line) = read {
             let mut words = line.split_whitespace();
-/*            ctx.run_later(Duration::from_secs(10), move |act, ctx| {
-                act.handle_timeout(ctx);
-            });*/
             match words.next() {
                 Some("RV") => {
                     if let (Some(Ok(candidate_node)), Some(Ok(term))) = (
@@ -41,14 +38,12 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         words.next().map(|w| w.parse::<u16>()),
                     ) {
                         println!("CONNECTION {} REQUESTED MY VOTE ON TERM {}", self.id_connection.unwrap(), term);
-                        _ = self.check_if_voted(term as usize, ctx);
                     }
                 }
                 Some("VOTE") =>{
                     if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>())
                      {
                         println!("[CONNECTION {:?}] VOTED ME ON TERM {}", self.id_connection, term);
-                         self.backend_actor.clone().unwrap().try_send(Vote { id: self.id_connection.unwrap(), term: term.into() }).expect("Error sending vote");
                     }
                 }
                 Some("HB") =>{
@@ -62,7 +57,6 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>())
                     {
                         println!("[CONNECTION {:?}] DIDNT VOTE US {}", self.id_connection, term);
-                        self.backend_actor.clone().unwrap().try_send(No { term }).expect("Error sending NO to CM");
                     }
                 }
                 _ => {
@@ -72,72 +66,11 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
         }
         else {
             println!("[ACTOR {}] Connection lost", self.id_connection.unwrap());
-            self.handle_disconnect(ctx);
+           // self.handle_disconnect(ctx);
         }
     }
 }
-impl Handler<AddNode> for HealthConnection {
-    type Result = ();
 
-    fn handle(&mut self, msg: AddNode, ctx: &mut Self::Context) -> Self::Result {
-        println!("[ACTOR {}] Added connection with: {}", self.id_connection.unwrap(), msg.id);
-        self.other_actors.insert(msg.id, msg.node);
-    }
-}
-impl Handler<AddBackend> for HealthConnection {
-    type Result = ();
-
-    fn handle(&mut self, msg: AddBackend, ctx: &mut Self::Context) -> Self::Result {
-        self.backend_actor = Some(msg.node);
-    }
-}
-impl Handler<Coordinator> for HealthConnection {
-    type Result = ();
-
-    fn handle(&mut self, msg: Coordinator, ctx: &mut Self::Context) -> Self::Result {
-        println!("[ACTOR {:?}] Received Coordinator: {}", self.id_connection, msg.id);
-        self.make_response(format!("COORDINATOR {}", msg.id), ctx);
-    }
-}
-impl Handler<ConnectionDown> for HealthConnection {
-    type Result = ();
-
-    fn handle(&mut self, msg: ConnectionDown, ctx: &mut Self::Context) -> Self::Result {
-        println!("[ACTOR {:?}] Connection down with actor: {}", self.id_connection, msg.id);
-        self.other_actors.remove_entry(&msg.id);
-        println!("Actor {} deleted", msg.id);
-    }
-}
-impl Handler<StartElection> for HealthConnection {
-    type Result = ();
-
-    fn handle(&mut self, msg: StartElection, ctx: &mut Self::Context) -> Self::Result {
-        println!("Requesting vote of: {} on term {}" ,self.id_connection.unwrap(), msg.term);
-        self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
-    }
-}
-impl Handler<Heartbeat> for HealthConnection {
-    type Result = ();
-
-    fn handle(&mut self, msg: Heartbeat, ctx: &mut Self::Context) -> Self::Result {
-        self.make_response(format!("HB {}", msg.term), ctx);
-    }
-}
-impl Handler<UpdateTerm> for HealthConnection {
-    type Result = ();
-
-    fn handle(&mut self, msg: UpdateTerm, ctx: &mut Self::Context) -> Self::Result {
-        self.current_term = msg.term;
-    }
-}
-impl Handler<RequestAnswer> for HealthConnection {
-    type Result = ();
-    fn handle(&mut self, msg: RequestAnswer, ctx: &mut Self::Context) -> Self::Result {
-        self.current_term = msg.term.clone();
-        println!("[CONNECTION {}]Term updated to {}", self.id_connection.unwrap(), self.current_term);
-        self.make_response(format!("{} {}",msg.msg, msg.term), ctx);
-    }
-}
 impl HealthConnection {
     pub fn create_actor(stream: TcpStream,  self_id: usize, id_connection: usize) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
@@ -174,28 +107,10 @@ impl HealthConnection {
                     }
                     Err(_) => {
                         println!("HOLAAA");
-                        this.handle_disconnect(ctx);
+                        //this.handle_disconnect(ctx);
                     }
                 }
             })
             .wait(ctx);
-    }
-    pub fn check_if_voted(&mut self, term: usize, ctx:&mut Context<Self>) {
-        let answer = self.backend_actor.clone().unwrap().try_send(RequestedOurVote { term, candidate_id: self.id_connection.unwrap()}).unwrap();
-    }
-    fn handle_timeout(&mut self, ctx: &mut Context<Self>) {
-        println!("[ACTOR {}] Connection timed out", self.id_connection.unwrap());
-        self.handle_disconnect(ctx);
-    }
-    fn handle_disconnect(&mut self, ctx: &mut Context<Self>) {
-        println!("[ACTOR {}] Connection lost", self.id_connection.unwrap());
-        let id = self.id_connection.unwrap();
-        for (notifying, actor) in &self.other_actors {
-            println!("SENDING TO ACTOR: {}", notifying);
-            actor.try_send(ConnectionDown { id }).unwrap_err();
-        }
-        if let Some(backend) = self.backend_actor.clone() {
-            backend.try_send(ConnectionDown { id }).unwrap();
-        }
     }
 }
