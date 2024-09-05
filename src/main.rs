@@ -1,5 +1,5 @@
 use std::env;
-use actix::{Actor};
+use actix::{Actor, AsyncContext, Context};
 use std::time::Duration;
 use tokio::time::sleep;
 use crate::backend::ConsensusModule;
@@ -21,12 +21,14 @@ async fn main() {
     let total_nodes: usize = args[2].parse().expect("Invalid total_nodes, must be a number");
     let port = node_id + 8000;
 
+    let ctx = Context::<ConsensusModule>::new();
     // First node only accepts
    let mut backend = ConsensusModule::start_connections(node_id, total_nodes, port).await;
-    let clone = backend.clone().start();
-    //backend.add_myself(clone.clone());
+    backend.add_myself(ctx.address());
+    backend.add_me_to_connections(ctx.address()).await;
     if node_id == total_nodes {
-        //backend.run_election_timer();
+        backend.run_election_timer();
     }
+    ctx.run(backend);
     sleep(Duration::from_secs(15)).await;
 }
