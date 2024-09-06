@@ -16,11 +16,15 @@ use tokio::{
 };
 use tokio_stream::wrappers::LinesStream;
 
+/// Actor que maneja las conexiones de salud y comunicación entre nodos.
+///
+/// Este actor se encarga de recibir y procesar mensajes de otros nodos y enviar respuestas
+/// a través de la conexión TCP establecida.
 pub struct HealthConnection {
     write: Option<WriteHalf<TcpStream>>,
     id_connection: Option<usize>,
     other_actors: HashMap<usize, Addr<HealthConnection>>,
-    backend_actor: Option<Addr<ConsensusModule>>, // Cambiado a Option<Addr<ConsensusModule>>
+    backend_actor: Option<Addr<ConsensusModule>>,
     current_term: usize,
 }
 
@@ -29,6 +33,14 @@ impl Actor for HealthConnection {
 }
 
 impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
+    /// Maneja los mensajes entrantes desde la conexión TCP.
+    ///
+    /// Procesa las líneas recibidas, decodifica los comandos y envía los mensajes apropiados
+    /// al actor de backend o maneja la desconexión si ocurre un error.
+    ///
+    /// # Arguments
+    /// * `read` - El resultado de la lectura de una línea desde la conexión TCP.
+    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, read: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(line) = read {
             let mut words = line.split_whitespace();
@@ -109,6 +121,14 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
 }
 
 impl HealthConnection {
+    /// Crea un nuevo actor `HealthConnection` a partir de una conexión TCP.
+    ///
+    /// # Arguments
+    /// * `stream` - La conexión TCP que se usará para la comunicación.
+    /// * `id_connection` - El identificador de la conexión.
+    ///
+    /// # Returns
+    /// Un `Addr<HealthConnection>` que representa el actor creado.
     pub fn create_actor(stream: TcpStream, id_connection: usize) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
             let (read_half, write_half) = split(stream);
@@ -117,11 +137,17 @@ impl HealthConnection {
                 write: Some(write_half),
                 id_connection: Some(id_connection),
                 other_actors: HashMap::new(),
-                backend_actor: None, // Inicializar como None
+                backend_actor: None,
                 current_term: 0,
             }
         })
     }
+
+    /// Envía una respuesta a través de la conexión TCP.
+    ///
+    /// # Arguments
+    /// * `response` - La respuesta a enviar.
+    /// * `ctx` - El contexto del actor.
     fn make_response(&mut self, response: String, ctx: &mut Context<Self>) {
         let mut write = self.write.take().expect("[ERROR] - NEW MESSAGE RECEIVED");
         let id = self.id_connection.unwrap();
@@ -134,21 +160,28 @@ impl HealthConnection {
                 }
             }
         })
-        .map(move |result, this, ctx| match result {
-            Ok(write) => {
-                this.write = Some(write);
-            }
-            Err(_) => {
-                ctx.stop();
-            }
-        })
-        .wait(ctx);
+            .map(move |result, this, ctx| match result {
+                Ok(write) => {
+                    this.write = Some(write);
+                }
+                Err(_) => {
+                    ctx.stop();
+                }
+            })
+            .wait(ctx);
     }
 }
 
 impl Handler<StartElection> for HealthConnection {
     type Result = ();
 
+    /// Maneja el mensaje `StartElection` para iniciar una nueva elección.
+    ///
+    /// Envía una solicitud de voto al actor de backend.
+    ///
+    /// # Arguments
+    /// * `msg` - El mensaje `StartElection` que contiene el identificador del candidato y el término.
+    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: StartElection, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
     }
@@ -157,6 +190,13 @@ impl Handler<StartElection> for HealthConnection {
 impl Handler<RequestAnswer> for HealthConnection {
     type Result = ();
 
+    /// Maneja el mensaje `RequestAnswer` para responder a una solicitud de voto.
+    ///
+    /// Actualiza el término actual y envía una respuesta al actor de backend.
+    ///
+    /// # Arguments
+    /// * `msg` - El mensaje `RequestAnswer` que contiene la respuesta y el término.
+    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: RequestAnswer, ctx: &mut Self::Context) -> Self::Result {
         self.current_term = msg.term;
         self.make_response(format!("{} {}", msg.msg, msg.term), ctx);
@@ -166,6 +206,11 @@ impl Handler<RequestAnswer> for HealthConnection {
 impl Handler<AddBackend> for HealthConnection {
     type Result = ();
 
+    /// Maneja el mensaje `AddBackend` para establecer el actor de backend.
+    ///
+    /// # Arguments
+    /// * `msg` - El mensaje `AddBackend` que contiene la dirección del actor de backend.
+    /// * `_ctx` - El contexto del actor.
     fn handle(&mut self, msg: AddBackend, _ctx: &mut Self::Context) -> Self::Result {
         self.backend_actor = Some(msg.node);
     }
@@ -174,13 +219,24 @@ impl Handler<AddBackend> for HealthConnection {
 impl Handler<ConnectionDown> for HealthConnection {
     type Result = ();
 
+    /// Maneja el mensaje `ConnectionDown` para eliminar un actor de la lista de actores conectados.
+    ///
+    /// # Arguments
+    /// * `msg` - El mensaje `ConnectionDown` que contiene el identificador del actor que se ha desconectado.
+    /// * `_ctx` - El contexto del actor.
     fn handle(&mut self, msg: ConnectionDown, _ctx: &mut Self::Context) -> Self::Result {
         self.other_actors.remove(&msg.id);
     }
 }
+
 impl Handler<Ack> for HealthConnection {
     type Result = ();
 
+    /// Maneja el mensaje `Ack` para enviar una confirmación de recepción.
+    ///
+    /// # Arguments
+    /// * `msg` - El mensaje `Ack` que contiene el término.
+    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Ack, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("ACK {}", msg.term), ctx);
     }
@@ -189,13 +245,24 @@ impl Handler<Ack> for HealthConnection {
 impl Handler<Heartbeat> for HealthConnection {
     type Result = ();
 
+    /// Maneja el mensaje `Heartbeat` para enviar un latido de corazón.
+    ///
+    /// # Arguments
+    /// * `msg` - El mensaje `Heartbeat` que contiene el término.
+    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Heartbeat, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("HB {}", msg.term), ctx);
     }
 }
+
 impl Handler<Coordinator> for HealthConnection {
     type Result = ();
 
+    /// Maneja el mensaje `Coordinator` para anunciar un nuevo líder.
+    ///
+    /// # Arguments
+    /// * `msg` - El mensaje `Coordinator` que contiene el identificador del líder y el término.
+    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Coordinator, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("NL {} {}", msg.id, msg.term), ctx);
     }

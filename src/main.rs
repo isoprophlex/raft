@@ -39,3 +39,5 @@ async fn main() {
 // TODO: WHAT DO I HAVE TO DO WHEN ONLY ONE NODE IS LEFT?
 
 // TODO: RECONNECTIONS?
+
+// TODO: Something with ACKS?

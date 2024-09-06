@@ -50,6 +50,15 @@ impl Actor for ConsensusModule {
 }
 
 impl ConsensusModule {
+    /// Inicia las conexiones entre nodos en función del `node_id` y `total_nodes`.
+    ///
+    /// # Arguments
+    /// * `node_id` - El identificador del nodo actual.
+    /// * `total_nodes` - El número total de nodos en la red.
+    /// * `port` - El puerto en el que el nodo escuchará las conexiones.
+    ///
+    /// # Returns
+    /// Un nuevo módulo de consenso con el mapa de conexiones inicializado.
     pub async fn start_connections(node_id: usize, total_nodes: usize, port: usize) -> Self {
         let mut connection_map = HashMap::new();
 
@@ -115,6 +124,7 @@ impl ConsensusModule {
             heartbeat_check_handle: None,
         }
     }
+    /// Incrementa el término actual y envía mensajes de `StartElection` a los nodos conectados.
     pub fn start_election(&mut self) {
         self.state = Candidate;
         self.current_term += 1;
@@ -138,9 +148,15 @@ impl ConsensusModule {
             }
         }
     }
+    /// Calcula y devuelve el tiempo de espera para la elección.
+    ///
+    /// # Returns
+    /// Un `Duration` con un valor aleatorio para el tiempo de espera.
     pub fn election_timeout(&self) -> Duration {
         Duration::from_millis(1000 + rand::random::<u64>() % 150)
     }
+    /// Inicia el temporizador de elecciones y verifica el tiempo transcurrido
+    /// para determinar si debe comenzar una nueva elección.
     pub fn run_election_timer(&mut self) {
         let timeout_duration = self.election_timeout();
         let term_started = self.current_term;
@@ -194,11 +210,15 @@ impl ConsensusModule {
             self.votes = Some(self.votes.unwrap() + 1);
             println!("Votes earned: {}", self.votes.unwrap());
         }
-        if self.votes.unwrap() > (self.connection_map.len() as u16 / 2) + 1 {
+        if self.votes.unwrap() >= (self.connection_map.len() as u16 / 2) + 1 {
             // Im leader
             self.become_leader(_ctx);
         }
     }
+    /// Marca al nodo como líder y comienza a enviar mensajes de latido a los otros nodos.
+    ///
+    /// # Arguments
+    /// * `ctx` - El contexto de Actix necesario para manejar la ejecución asíncrona.
     pub fn become_leader(&mut self, ctx: &mut Context<Self>) {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id);
@@ -249,6 +269,7 @@ impl ConsensusModule {
 
         self.heartbeat_handle = Some(handle);
     }
+    /// Le manda a los actores que se anuncie como lider
     pub fn announce_leader(&mut self, _ctx: &mut Context<Self>) {
         for actor in self.connection_map.values() {
             actor
@@ -259,8 +280,13 @@ impl ConsensusModule {
                 .unwrap()
         }
     }
+    /// Inicia un intervalo para verificar la recepción de latidos.
+    ///
+    /// Si no se recibe un latido dentro del intervalo especificado, se inicia una nueva elección.
+    ///
+    /// # Arguments
+    /// * `ctx` - El contexto de Actix para la ejecución del actor.
     pub fn start_heartbeat_check(&mut self, ctx: &mut Context<Self>) {
-        // Si ya hay un heartbeat_check en curso, lo cancelamos
         if let Some(handle) = self.heartbeat_check_handle.take() {
             ctx.cancel_future(handle);
         }
@@ -381,8 +407,6 @@ impl Handler<HB> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: HB, _ctx: &mut Self::Context) -> Self::Result {
-        println!("RECEIVED HEARTBEAT {}", msg.term);
-
         if self.current_term < msg.term as usize {
             println!("I was out of date, updating to {}", msg.term);
             self.current_term = msg.term as usize;
