@@ -1,9 +1,6 @@
 use crate::backend::State::{Candidate, Follower};
 use crate::health_connection::HealthConnection;
-use crate::messages::{
-    AddBackend, AddNode, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer,
-    RequestedOurVote, StartElection, Vote, Ack, HB,
-};
+use crate::messages::{AddBackend, AddNode, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer, RequestedOurVote, StartElection, Vote, Ack, HB, NewConnection};
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -59,56 +56,20 @@ impl ConsensusModule {
     ///
     /// # Returns
     /// Un nuevo módulo de consenso con el mapa de conexiones inicializado.
-    pub async fn start_connections(node_id: usize, total_nodes: usize, port: usize) -> Self {
+    pub async fn start_connections(node_id: usize, port: usize) -> Self {
         let mut connection_map = HashMap::new();
 
-        if node_id == 1 {
-            let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-                .await
-                .unwrap();
-            println!("Node {} is listening on 127.0.0.1:{}", node_id, port);
-
-            let mut next_id = node_id + 1;
-            while next_id <= total_nodes {
-                if let Ok((stream, _)) = listener.accept().await {
-                    let addr = HealthConnection::create_actor(stream, next_id);
-                    connection_map.insert(next_id, addr);
-                    println!("Connection accepted with ID: {}", next_id);
-                    next_id += 1;
-                }
-            }
-        } else if node_id > 1 && node_id < total_nodes {
+        if node_id > 1 {
             for previous_id in 1..node_id {
                 let addr = format!("127.0.0.1:{}", previous_id + 8000);
                 let stream = TcpStream::connect(addr).await.unwrap();
                 println!("Node {} connected to Node {}", node_id, previous_id);
 
-                let actor_addr = HealthConnection::create_actor(stream, previous_id);
-                connection_map.insert(previous_id, actor_addr);
-            }
-
-            let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-                .await
-                .unwrap();
-            println!("Node {} is listening on 127.0.0.1:{}", node_id, port);
-
-            let mut next_id = node_id + 1;
-            while next_id <= total_nodes {
-                if let Ok((stream, _)) = listener.accept().await {
-                    let addr = HealthConnection::create_actor(stream, next_id);
-                    connection_map.insert(next_id, addr);
-                    println!("Connection accepted with ID: {}", next_id);
-                    next_id += 1;
-                }
-            }
-        } else if node_id == total_nodes {
-            for previous_id in 1..node_id {
-                let addr = format!("127.0.0.1:{}", previous_id + 8000);
-                let stream = TcpStream::connect(addr).await.unwrap();
-                let actor_addr = HealthConnection::create_actor(stream, previous_id);
+                let actor_addr = HealthConnection::create_actor(stream, previous_id, node_id);
                 connection_map.insert(previous_id, actor_addr);
             }
         }
+
         Self {
             connection_map,
             node_id,
@@ -124,6 +85,7 @@ impl ConsensusModule {
             heartbeat_check_handle: None,
         }
     }
+
     /// Incrementa el término actual y envía mensajes de `StartElection` a los nodos conectados.
     pub fn start_election(&mut self) {
         self.state = Candidate;
@@ -228,7 +190,6 @@ impl ConsensusModule {
         );
         self.announce_leader(ctx);
 
-        // Cancelar cualquier intervalo anterior si existe
         if let Some(handle) = self.heartbeat_handle.take() {
             ctx.cancel_future(handle);
         }
@@ -438,5 +399,13 @@ impl Handler<No> for ConsensusModule {
             println!("I'm out of date, now I become a follower.");
             self.state = State::Follower;
         }
+    }
+}
+impl Handler<NewConnection> for ConsensusModule {
+    type Result = ();
+
+    fn handle(&mut self, msg: NewConnection, _ctx: &mut Self::Context) -> Self::Result {
+        let actor_addr = HealthConnection::create_actor(msg.stream, msg.id_connection, self.node_id);
+        self.connection_map.insert(msg.id_connection, actor_addr);
     }
 }

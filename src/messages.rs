@@ -1,6 +1,7 @@
 use crate::backend::ConsensusModule;
 use crate::health_connection::HealthConnection;
 use actix::prelude::*;
+use tokio::net::TcpStream;
 
 /// Message struct representing the need to add a node connection
 #[derive(Message)]
@@ -79,4 +80,10 @@ pub struct HB {
 #[rtype(result = "()")]
 pub struct Ack {
     pub term: u16,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct NewConnection {
+    pub id_connection: usize,
+    pub stream: TcpStream,
 }
