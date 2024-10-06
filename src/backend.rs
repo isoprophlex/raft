@@ -116,7 +116,7 @@ impl ConsensusModule {
     /// # Returns
     /// Un `Duration` con un valor aleatorio para el tiempo de espera.
     pub fn election_timeout(&self) -> Duration {
-        Duration::from_millis(1000 + rand::random::<u64>() % 150)
+        Duration::from_secs(5)
     }
     /// Inicia el temporizador de elecciones y verifica el tiempo transcurrido
     /// para determinar si debe comenzar una nueva elección.
@@ -192,18 +192,19 @@ impl ConsensusModule {
         );
         self.announce_leader(ctx);
 
+        // Cancelar cualquier manejo anterior de heartbeats si existe
         if let Some(handle) = self.heartbeat_handle.take() {
             ctx.cancel_future(handle);
         }
 
         let current_term = self.current_term;
         let node_id = self.node_id;
-        let mut connection_map = self.connection_map.clone();
-        let connection_map2 = self.connection_map.clone();
 
-        let handle = ctx.run_interval(Duration::from_millis(1000), move |actor, ctx| {
+        let handle = ctx.run_interval(Duration::from_secs(3), move |actor, ctx| {
             let mut ids_to_delete: Vec<usize> = Vec::new();
-            for (id, connection) in &mut connection_map {
+
+            // Acceder al connection_map actualizado del actor
+            for (id, connection) in &mut actor.connection_map {
                 match connection.try_send(Heartbeat { term: current_term }) {
                     Ok(_) => {}
                     Err(e) => {
@@ -211,18 +212,23 @@ impl ConsensusModule {
                             "[ACTOR] Error sending Heartbeat to connection {}: {}",
                             id, e
                         );
-                        for notifying_actor in connection_map2.values() {
-                            notifying_actor.do_send(ConnectionDown { id: *id });
-                        }
                         ids_to_delete.push(*id);
                     }
                 }
             }
-            if !ids_to_delete.is_empty() {
-                for id in ids_to_delete {
-                    connection_map.remove_entry(&id);
+
+            for id in &ids_to_delete {
+                for notifying_actor in actor.connection_map.values() {
+                    notifying_actor.do_send(ConnectionDown { id: *id });
                 }
             }
+
+            if !ids_to_delete.is_empty() {
+                for id in ids_to_delete {
+                    actor.connection_map.remove(&id);
+                }
+            }
+
             if actor.state != State::Leader {
                 println!("Node {} is no longer the Leader", node_id);
                 ctx.stop();
@@ -231,6 +237,8 @@ impl ConsensusModule {
 
         self.heartbeat_handle = Some(handle);
     }
+
+
     /// Le manda a los actores que se anuncie como lider
     pub fn announce_leader(&mut self, _ctx: &mut Context<Self>) {
         for actor in self.connection_map.values() {
@@ -263,7 +271,6 @@ impl ConsensusModule {
                 node_id,
                 elapsed.as_millis()
             );
-            println!("CONNECTIONS: {}", actor.connection_map.len());
             if actor.state == State::Leader {
                 println!(
                     "[NODE {}] I'm the leader, stopping heartbeat check",
@@ -426,24 +433,33 @@ impl Handler<Reconnection> for ConsensusModule {
     fn handle(&mut self, msg: Reconnection, _ctx: &mut Self::Context) -> Self::Result {
         println!("Reconnecting to Node {}", msg.node_id);
 
-        if self.connection_map.contains_key(&msg.node_id) {
-            println!("Connection to Node {} already exists", msg.node_id);
-            return;
-        }
-
         let addr = format!("127.0.0.1:{}", msg.node_id + 8000);
         let future_stream = TcpStream::connect(addr);
 
-        let mut connection_map = self.connection_map.clone();
         let node_id = self.node_id;
-
+        let myself_clone = self.myself.clone();
+        let ctx_clone = _ctx.address();
+        let cur_term = self.current_term.clone();
+        let leader_id = self.leader_id.clone();
+        // Eliminamos el uso de `connection_map` clonado
         actix::spawn(async move {
             match future_stream.await {
                 Ok(stream) => {
                     println!("Successfully reconnected to Node {}", msg.node_id);
                     let actor_addr = HealthConnection::create_actor(stream, msg.node_id, node_id);
-                    connection_map.insert(msg.node_id, actor_addr);
-                    //actor_addr.try_send(AddBackend{node: self.myself.unwrap()});
+
+                    // Enviamos el mensaje de reconexión al líder para que actualice el connection_map y lo añada a heartbeats
+                    ctx_clone
+                        .send(AddNode { id: msg.node_id, node: actor_addr.clone() })
+                        .await
+                        .expect("Error sending AddNode");
+
+                    actor_addr
+                        .try_send(AddBackend { node: myself_clone.unwrap() })
+                        .expect("Failed to send AddBackend");
+                    actor_addr
+                        .try_send(NewLeader { id: leader_id.unwrap(), term: cur_term })
+                        .expect("Failed to send AddBackend");
                 }
                 Err(e) => {
                     println!("Failed to reconnect to Node {}: {}", msg.node_id, e);
@@ -457,7 +473,6 @@ impl Handler<UpdateID> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {
-        println!("Entro");
         if msg.old_id != msg.new_id {
             if let Some(connection) = self.connection_map.remove(&msg.old_id) {
                 self.connection_map.insert(msg.new_id, connection);

@@ -322,3 +322,11 @@ impl Handler<ID> for HealthConnection {
         self.make_response(format!("ID {}", msg.id), _ctx);
     }
 }
+
+impl Handler<NewLeader> for HealthConnection {
+    type Result = ();
+
+    fn handle(&mut self, msg: NewLeader, _ctx: &mut Self::Context) -> Self::Result {
+        self.make_response(format!("NL {} {}", msg.id, msg.term), _ctx);
+    }
+}
