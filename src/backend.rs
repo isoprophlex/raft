@@ -116,7 +116,7 @@ impl ConsensusModule {
     /// # Returns
     /// Un `Duration` con un valor aleatorio para el tiempo de espera.
     pub fn election_timeout(&self) -> Duration {
-        Duration::from_secs(5)
+        Duration::from_millis(1000 + rand::random::<u64>() % 150)
     }
     /// Inicia el temporizador de elecciones y verifica el tiempo transcurrido
     /// para determinar si debe comenzar una nueva elección.
@@ -200,7 +200,7 @@ impl ConsensusModule {
         let current_term = self.current_term;
         let node_id = self.node_id;
 
-        let handle = ctx.run_interval(Duration::from_secs(3), move |actor, ctx| {
+        let handle = ctx.run_interval(Duration::from_millis(1000), move |actor, ctx| {
             let mut ids_to_delete: Vec<usize> = Vec::new();
 
             // Acceder al connection_map actualizado del actor
@@ -459,7 +459,7 @@ impl Handler<Reconnection> for ConsensusModule {
                         .expect("Failed to send AddBackend");
                     actor_addr
                         .try_send(NewLeader { id: leader_id.unwrap(), term: cur_term })
-                        .expect("Failed to send AddBackend");
+                        .expect("Failed to send NewLeader");
                 }
                 Err(e) => {
                     println!("Failed to reconnect to Node {}: {}", msg.node_id, e);
