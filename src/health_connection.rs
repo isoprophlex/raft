@@ -2,10 +2,7 @@ extern crate actix;
 use actix::prelude::*;
 
 use crate::backend::ConsensusModule;
-use crate::messages::{
-    AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer,
-    RequestedOurVote, StartElection, Vote, Ack, HB,
-};
+use crate::messages::{AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer, RequestedOurVote, StartElection, Vote, Ack, HB, Reconnection, ID, UpdateID};
 use actix::fut::wrap_future;
 use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use std::collections::HashMap;
@@ -93,6 +90,14 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         let _ = self.backend_actor.clone().unwrap().try_send(No { term });
                     }
                 }
+                Some("ID") => {
+                    if let Some(Ok(id)) = words.next().map(|w| w.parse::<u16>()) {
+                        let _ = self.backend_actor.clone().unwrap().try_send(UpdateID { new_id: id as usize, old_id: self.id_connection.unwrap() });
+                        if id as usize != self.id_connection.unwrap() {
+                            self.id_connection = Some(id as usize);
+                        }
+                    }
+                }
                 Some("NL") => {
                     if let (Some(Ok(leader_node)), Some(Ok(term))) = (
                         words.next().map(|w| w.parse::<u16>()),
@@ -106,6 +111,34 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                     term: term as usize,
                                 })
                                 .expect("Failed to send message");
+                        } else {
+                            eprintln!("Backend actor is not available");
+                        }
+                    }
+                }
+                Some("RC") => {
+                    if let Some(Ok(node_id)) = words.next().map(|w| w.parse::<u16>()) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            backend_addr
+                                .clone()
+                                .try_send(Reconnection {
+                                    node_id: node_id as usize,
+                                })
+                                .expect("Failed to send reconnection message");
+                        } else {
+                            eprintln!("Backend actor is not available");
+                        }
+                    }
+                }
+                Some("CD") => {
+                    if let Some(Ok(node_id)) = words.next().map(|w| w.parse::<u16>()) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            backend_addr
+                                .clone()
+                                .try_send(ConnectionDown {
+                                    id: node_id as usize,
+                                })
+                                .expect("Failed to send connection down message");
                         } else {
                             eprintln!("Backend actor is not available");
                         }
@@ -232,6 +265,7 @@ impl Handler<ConnectionDown> for HealthConnection {
     /// * `_ctx` - El contexto del actor.
     fn handle(&mut self, msg: ConnectionDown, _ctx: &mut Self::Context) -> Self::Result {
         self.other_actors.remove(&msg.id);
+        self.make_response(format!("CD {}", msg.id), _ctx);
     }
 }
 
@@ -271,5 +305,20 @@ impl Handler<Coordinator> for HealthConnection {
     /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Coordinator, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("NL {} {}", msg.id, msg.term), ctx);
+    }
+}
+
+impl Handler<Reconnection> for HealthConnection {
+    type Result = ();
+
+    fn handle(&mut self, msg: Reconnection, _ctx: &mut Self::Context) -> Self::Result {
+        self.make_response(format!("RC {}", msg.node_id), _ctx);
+    }
+}
+impl Handler<ID> for HealthConnection {
+    type Result = ();
+
+    fn handle(&mut self, msg: ID, _ctx: &mut Self::Context) -> Self::Result {
+        self.make_response(format!("ID {}", msg.id), _ctx);
     }
 }

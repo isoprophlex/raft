@@ -1,10 +1,10 @@
 use crate::backend::ConsensusModule;
-use actix::{Addr, AsyncContext, Context};
+use actix::{Addr, AsyncContext, Actor, Context, System};
 use std::env;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::time::sleep;
-use tokio::task::{spawn, spawn_local};
+use actix_rt::spawn;
+use actix::clock::sleep;
 use crate::messages::NewConnection;
 
 mod backend;
@@ -25,24 +25,22 @@ async fn main() {
         .parse()
         .expect("Invalid total_nodes, must be a number");
     let port = node_id + 8000;
-
     let ctx = Context::<ConsensusModule>::new();
-    // First node only accepts
-    let mut backend = ConsensusModule::start_connections(node_id, port).await;
 
+    let mut backend = ConsensusModule::start_connections(node_id, port).await;
+    let join = spawn(listen_for_connections(node_id, port, ctx.address()));
     backend.add_myself(ctx.address());
     backend.add_me_to_connections(ctx.address()).await;
+
     if node_id == total_nodes {
         backend.run_election_timer();
     }
-    let mut ctx_task = ctx.address();
-    let backend_future = ctx.run(backend);
-    spawn(async move {
-        listen_for_connections(node_id, port, ctx_task).await;
-    });
-    // TODO: This sleep???????
+    ctx.run(backend);
+
     sleep(Duration::from_secs(60)).await;
+
 }
+
 pub async fn listen_for_connections(node_id: usize, port: usize, ctx_task: Addr<ConsensusModule>) {
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
@@ -50,12 +48,16 @@ pub async fn listen_for_connections(node_id: usize, port: usize, ctx_task: Addr<
 
     println!("Node {} is listening on 127.0.0.1:{}", node_id, port);
     let mut new_connection = node_id;
+
     loop {
-        println!("Escucho");
         match listener.accept().await {
             Ok((stream, _)) => {
                 new_connection += 1;
-                ctx_task.send(NewConnection { id_connection: new_connection, stream }).await.expect("Error sending new message");
+                ctx_task
+                    .send(NewConnection { id_connection: new_connection, stream })
+                    .await
+                    .expect("Error sending new message");
+
                 println!("Connection accepted from Node. Actor created.");
             }
             Err(e) => {

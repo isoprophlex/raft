@@ -87,3 +87,19 @@ pub struct NewConnection {
     pub id_connection: usize,
     pub stream: TcpStream,
 }
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Reconnection {
+    pub node_id: usize,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ID {
+    pub id: usize,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct UpdateID {
+    pub old_id: usize,
+    pub new_id: usize,
+}

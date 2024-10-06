@@ -1,6 +1,6 @@
 use crate::backend::State::{Candidate, Follower};
 use crate::health_connection::HealthConnection;
-use crate::messages::{AddBackend, AddNode, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer, RequestedOurVote, StartElection, Vote, Ack, HB, NewConnection};
+use crate::messages::{AddBackend, AddNode, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer, RequestedOurVote, StartElection, Vote, Ack, HB, NewConnection, Reconnection, ID, UpdateID};
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -66,6 +66,7 @@ impl ConsensusModule {
                 println!("Node {} connected to Node {}", node_id, previous_id);
 
                 let actor_addr = HealthConnection::create_actor(stream, previous_id, node_id);
+                actor_addr.try_send(ID { id: node_id }).expect("Error sending ID");
                 connection_map.insert(previous_id, actor_addr);
             }
         }
@@ -153,9 +154,10 @@ impl ConsensusModule {
     }
     pub async fn add_me_to_connections(&self, ctx: Addr<ConsensusModule>) {
         for connection in self.connection_map.values() {
+            println!("{:?}", ctx);
             connection
                 .send(AddBackend {
-                    node: ctx.to_owned(),
+                    node: ctx.clone(),
                 })
                 .await
                 .expect("Error sending backend to connections");
@@ -221,7 +223,6 @@ impl ConsensusModule {
                     connection_map.remove_entry(&id);
                 }
             }
-
             if actor.state != State::Leader {
                 println!("Node {} is no longer the Leader", node_id);
                 ctx.stop();
@@ -262,7 +263,7 @@ impl ConsensusModule {
                 node_id,
                 elapsed.as_millis()
             );
-
+            println!("CONNECTIONS: {}", actor.connection_map.len());
             if actor.state == State::Leader {
                 println!(
                     "[NODE {}] I'm the leader, stopping heartbeat check",
@@ -405,7 +406,71 @@ impl Handler<NewConnection> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: NewConnection, _ctx: &mut Self::Context) -> Self::Result {
+
         let actor_addr = HealthConnection::create_actor(msg.stream, msg.id_connection, self.node_id);
-        self.connection_map.insert(msg.id_connection, actor_addr);
+        self.connection_map.insert(msg.id_connection, actor_addr.clone());
+
+        if let Some(myself_addr) = &self.myself {
+            actor_addr
+                .try_send(AddBackend { node: myself_addr.clone() })
+                .expect("Error sending AddBackend to accepted connection");
+        }
+
+
+        }
+    }
+
+impl Handler<Reconnection> for ConsensusModule {
+    type Result = ();
+
+    fn handle(&mut self, msg: Reconnection, _ctx: &mut Self::Context) -> Self::Result {
+        println!("Reconnecting to Node {}", msg.node_id);
+
+        if self.connection_map.contains_key(&msg.node_id) {
+            println!("Connection to Node {} already exists", msg.node_id);
+            return;
+        }
+
+        let addr = format!("127.0.0.1:{}", msg.node_id + 8000);
+        let future_stream = TcpStream::connect(addr);
+
+        let mut connection_map = self.connection_map.clone();
+        let node_id = self.node_id;
+
+        actix::spawn(async move {
+            match future_stream.await {
+                Ok(stream) => {
+                    println!("Successfully reconnected to Node {}", msg.node_id);
+                    let actor_addr = HealthConnection::create_actor(stream, msg.node_id, node_id);
+                    connection_map.insert(msg.node_id, actor_addr);
+                    //actor_addr.try_send(AddBackend{node: self.myself.unwrap()});
+                }
+                Err(e) => {
+                    println!("Failed to reconnect to Node {}: {}", msg.node_id, e);
+                }
+            }
+        });
+    }
+}
+
+impl Handler<UpdateID> for ConsensusModule {
+    type Result = ();
+
+    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {
+        println!("Entro");
+        if msg.old_id != msg.new_id {
+            if let Some(connection) = self.connection_map.remove(&msg.old_id) {
+                self.connection_map.insert(msg.new_id, connection);
+                println!("Updated connection ID from {} to {}", msg.old_id, msg.new_id);
+                for (&id, addr) in &self.connection_map {
+                    if id != msg.new_id {
+                        addr.try_send(Reconnection { node_id: msg.new_id })
+                            .expect("Error sending Reconnection message");
+                    } else {
+                        println!("Connection with ID {} not found", msg.old_id);
+                    }
+                }
+            }
+        }
     }
 }
