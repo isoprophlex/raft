@@ -37,8 +37,7 @@ async fn main() {
     }
     ctx.run(backend);
 
-    sleep(Duration::from_secs(60)).await;
-
+    join.await.expect("Error in join.await");
 }
 
 pub async fn listen_for_connections(node_id: usize, port: usize, ctx_task: Addr<ConsensusModule>) {
