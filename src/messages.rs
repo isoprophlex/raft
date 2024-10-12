@@ -1,71 +1,105 @@
-use actix::prelude::*;
-use crate::backend::{ConsensusModule};
+use crate::backend::ConsensusModule;
 use crate::health_connection::HealthConnection;
+use actix::prelude::*;
+use tokio::net::TcpStream;
 
 /// Message struct representing the need to add a node connection
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct AddNode {
     pub id: usize,
-    pub node: Addr<HealthConnection>
+    pub node: Addr<HealthConnection>,
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct AddBackend {
-    pub node: Addr<ConsensusModule>
+    pub node: Addr<ConsensusModule>,
 }
 /// Message representing a Coordinator message
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Coordinator {
-    pub id: usize
+    pub id: usize,
+    pub term: usize,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct NewLeader {
+    pub id: usize,
+    pub term: usize,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Vote {
     pub id: usize,
-    pub term: usize
+    pub term: usize,
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct ConnectionDown {
-    pub id: usize
+    pub id: usize,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct StartElection {
     pub id: usize,
-    pub term: usize
-}
-
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct UpdateTerm {
-    pub term: usize
+    pub term: usize,
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Heartbeat {
-    pub term: usize
+    pub term: usize,
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct RequestedOurVote {
     pub term: usize,
-    pub candidate_id: usize
+    pub candidate_id: usize,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct RequestAnswer {
     pub msg: String,
-    pub term: usize
+    pub term: usize,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct No {
-    pub term: u16
+    pub term: u16,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct HB {
+    pub term: u16,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Ack {
+    pub term: u16,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct NewConnection {
+    pub id_connection: usize,
+    pub stream: TcpStream,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Reconnection {
+    pub node_id: usize,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ID {
+    pub id: usize,
+}
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct UpdateID {
+    pub old_id: usize,
+    pub new_id: usize,
 }
