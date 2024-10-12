@@ -11,6 +11,47 @@ mod backend;
 mod health_connection;
 mod messages;
 
+struct RaftNode {
+    node_id: usize,
+    ip: String,
+    port: usize,
+    total_nodes: usize,
+    address: Option<Addr<ConsensusModule>>,
+}
+
+impl RaftNode {
+    pub fn new(node_id: usize, ip: String, port: usize, total_nodes: usize) -> Self {
+        RaftNode {
+            node_id,
+            ip,
+            port,
+            total_nodes,
+            address: None
+        }
+    }
+
+    pub async fn start(&mut self) {
+    let node_id = self.node_id;
+    let port = self.port;
+
+    let ctx = Context::<ConsensusModule>::new();
+    let mut backend = ConsensusModule::start_connections(node_id, port).await;
+
+    let join = spawn(listen_for_connections(node_id, port, ctx.address()));
+    backend.add_myself(ctx.address());
+    backend.add_me_to_connections(ctx.address()).await;
+    
+    self.address = Some(ctx.address());
+
+    if node_id == self.total_nodes {
+        backend.run_election_timer();
+    }
+
+    ctx.run(backend);
+    join.await.expect("Error in join.await");
+    }
+}
+
 #[actix_rt::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
@@ -25,19 +66,9 @@ async fn main() {
         .parse()
         .expect("Invalid total_nodes, must be a number");
     let port = node_id + 8000;
-    let ctx = Context::<ConsensusModule>::new();
-
-    let mut backend = ConsensusModule::start_connections(node_id, port).await;
-    let join = spawn(listen_for_connections(node_id, port, ctx.address()));
-    backend.add_myself(ctx.address());
-    backend.add_me_to_connections(ctx.address()).await;
-
-    if node_id == total_nodes {
-        backend.run_election_timer();
-    }
-    ctx.run(backend);
-
-    join.await.expect("Error in join.await");
+    
+    let mut raft_node = RaftNode::new(node_id, "127.0.0.1".to_string(), port, total_nodes);
+    raft_node.start().await;
 }
 
 pub async fn listen_for_connections(node_id: usize, port: usize, ctx_task: Addr<ConsensusModule>) {
