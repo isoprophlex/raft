@@ -333,6 +333,21 @@ impl Handler<RequestedOurVote> for ConsensusModule {
             "Received vote request from {} in term {}",
             msg.candidate_id, msg.term
         );
+
+        // If the candidate is out of date, send NewLeader
+        if msg.term < self.current_term {
+            println!("The candidate is out of date, sending NewLeader");
+            let connection = self.connection_map.get(&msg.candidate_id).unwrap();
+            connection
+                .try_send(NewLeader {
+                    id: self.leader_id.clone().unwrap(),
+                    term: self.current_term,
+                })
+                .expect("Error sending NewLeader to candidate");
+            return
+        }
+
+        // Si no se ha votado o el último voto fue cero, se vota
         if self.last_vote.is_none() || self.last_vote == Some(0) {
             println!("First election!");
             self.last_vote = Some(msg.term);
@@ -344,7 +359,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     term: vote_term,
                 })
                 .expect("Error sending VOTE HIM to connection");
-        } else if vote_term > self.current_term {
+        } else if vote_term > self.current_term { // Si el término de la votación es mayor al actual, se vota
             println!("I have to vote!");
             let lock = self.connection_map.clone();
             let actor = lock.get(&msg.candidate_id).unwrap();
@@ -354,7 +369,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     term: vote_term,
                 })
                 .expect("Error sending VOTE HIM to connection");
-        } else if vote_term == self.current_term {
+        } else if vote_term == self.current_term { // Si el término de la votación es igual al actual, no se vota
             println!("I have already voted!");
             let lock = self.connection_map.clone();
             let actor = lock.get(&msg.candidate_id).unwrap();
@@ -389,6 +404,9 @@ impl Handler<NewLeader> for ConsensusModule {
     fn handle(&mut self, msg: NewLeader, _ctx: &mut Self::Context) -> Self::Result {
         println!("We have a new leader: {}", msg.id);
         self.leader_id = Some(msg.id);
+        if self.leader_id != Some(self.node_id.clone()) {
+            self.state = Follower;
+        }
         if self.current_term < msg.term {
             self.current_term = msg.term;
         }
@@ -402,6 +420,7 @@ impl Handler<HB> for ConsensusModule {
         if self.current_term < msg.term as usize {
             println!("I was out of date, updating to {}", msg.term);
             self.current_term = msg.term as usize;
+            return
         }
 
         self.election_reset_event = Instant::now();
@@ -498,20 +517,37 @@ impl Handler<Reconnection> for ConsensusModule {
 impl Handler<UpdateID> for ConsensusModule {
     type Result = ();
 
-    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {        
-        if let Some(connection) = self.connection_map.remove(&msg.old_id) {
-            
-            self.connection_map.insert(msg.new_id.clone(), connection);
-            println!("Updated connection ID from {} to {}", msg.old_id, msg.new_id.clone());
+    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {    
+        if self.id_is_connected(&msg.old_id) {
+            self.update_id(msg);
+            return
+        }
 
-            for (id, addr) in &self.connection_map {
-                if *id != msg.new_id {
-                    addr.try_send(Reconnection { ip: msg.ip.clone(), port: msg.port, node_id: msg.new_id.clone() })
-                        .expect("Error sending Reconnection message");
-                } else {
-                    println!("Connection with ID {} not found", msg.old_id);
-                }
-            }
+        println!("Connection with ID {} not found", msg.old_id);
+        println!("Connection map: {:?}", self.connection_map);
+        
+        // Si no se encuentra la conexión, se envía un mensaje de reconexión a todos los nodos
+        self.send_reconnection_msg(msg.ip, msg.port, msg.old_id);
+    }
+}
+
+impl ConsensusModule {
+    fn id_is_connected(&self, id: &str) -> bool {
+        self.connection_map.contains_key(id)
+    }
+
+    fn update_id(&mut self, msg: UpdateID) {
+        if let Some(connection) = self.connection_map.remove(&msg.old_id) { // si estaba 127.0.0.1:65117, lo borro
+            self.connection_map.insert(msg.new_id.clone(), connection); // node2
+            println!("Updated connection ID from {} to {}", msg.old_id, msg.new_id.clone());
+            return
+        }
+    }
+
+    fn send_reconnection_msg(&mut self, ip: String, port: usize, id: String) {
+        for (_, addr) in &self.connection_map {
+            addr.try_send(Reconnection { ip: ip.clone(), port, node_id: id.clone() })
+                    .expect("Error sending Reconnection message");
         }
     }
 }

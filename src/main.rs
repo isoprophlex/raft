@@ -77,8 +77,6 @@ impl RaftNode {
                         })
                         .await
                         .expect("Error sending new message");
-    
-                    println!("Connection accepted from Node. Actor created.");
                 }
                 Err(e) => {
                     eprintln!("Error accepting connection: {}", e);
