@@ -23,9 +23,9 @@ use tokio_stream::wrappers::LinesStream;
 /// a través de la conexión TCP establecida.
 pub struct HealthConnection {
     write: Option<WriteHalf<TcpStream>>,
-    self_id: usize,
-    id_connection: Option<usize>,
-    other_actors: HashMap<usize, Addr<HealthConnection>>,
+    self_id: String,
+    id_connection: Option<String>,
+    other_actors: HashMap<String, Addr<HealthConnection>>,
     backend_actor: Option<Addr<ConsensusModule>>,
     current_term: usize,
 }
@@ -49,14 +49,14 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
             match words.next() {
                 Some("RV") => {
                     if let (Some(Ok(candidate_node)), Some(Ok(term))) = (
-                        words.next().map(|w| w.parse::<u16>()),
+                        words.next().map(|w| w.parse::<String>()),
                         words.next().map(|w| w.parse::<u16>()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
                             backend_addr
                                 .clone()
                                 .try_send(RequestedOurVote {
-                                    candidate_id: candidate_node as usize,
+                                    candidate_id: candidate_node,
                                     term: term as usize,
                                 })
                                 .expect("Failed to send message");
@@ -71,7 +71,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                             backend_addr
                                 .clone()
                                 .try_send(Vote {
-                                    id: self.id_connection.unwrap(),
+                                    id: self.id_connection.clone().unwrap(),
                                     term: term.into(),
                                 })
                                 .expect("Failed to send message");
@@ -91,23 +91,36 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 Some("ID") => {
-                    if let Some(Ok(id)) = words.next().map(|w| w.parse::<u16>()) {
-                        let _ = self.backend_actor.clone().unwrap().try_send(UpdateID { new_id: id as usize, old_id: self.id_connection.unwrap() });
-                        if id as usize != self.id_connection.unwrap() {
-                            self.id_connection = Some(id as usize);
+                    if let (Some(Ok(id)), Some(ip), Some(Ok(port))) = (
+                        words.next().map( |w| w.parse::<String>()),
+                        words.next().map(|w| w.to_string()),
+                        words.next().map(|w| w.parse::<usize>()),
+                    ) {
+                        let _ = self.backend_actor.clone().unwrap().try_send(UpdateID {
+                            ip,
+                            port,
+                            new_id: id.clone(),
+                            old_id: self.id_connection.clone().unwrap(),
+                            
+                        });
+
+                        if id != self.id_connection.clone().unwrap() {
+                            self.id_connection = Some(id);
                         }
                     }
                 }
+
+
                 Some("NL") => {
                     if let (Some(Ok(leader_node)), Some(Ok(term))) = (
-                        words.next().map(|w| w.parse::<u16>()),
+                        words.next().map(|w| w.parse::<String>()),
                         words.next().map(|w| w.parse::<u16>()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
                             backend_addr
                                 .clone()
                                 .try_send(NewLeader {
-                                    id: leader_node as usize,
+                                    id: leader_node,
                                     term: term as usize,
                                 })
                                 .expect("Failed to send message");
@@ -117,12 +130,18 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 Some("RC") => {
-                    if let Some(Ok(node_id)) = words.next().map(|w| w.parse::<u16>()) {
+                    if let (Some(Ok(id)), Some(ip), Some(Ok(port))) = (
+                        words.next().map( |w| w.parse::<String>()),
+                        words.next().map(|w| w.to_string()),
+                        words.next().map(|w| w.parse::<usize>()),
+                    ) {
                         if let Some(backend_addr) = &self.backend_actor {
                             backend_addr
                                 .clone()
                                 .try_send(Reconnection {
-                                    node_id: node_id as usize,
+                                    node_id: id,
+                                    ip,
+                                    port
                                 })
                                 .expect("Failed to send reconnection message");
                         } else {
@@ -131,12 +150,12 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 Some("CD") => {
-                    if let Some(Ok(node_id)) = words.next().map(|w| w.parse::<u16>()) {
+                    if let Some(Ok(node_id)) = words.next().map(|w| w.parse::<String>()) {
                         if let Some(backend_addr) = &self.backend_actor {
                             backend_addr
                                 .clone()
                                 .try_send(ConnectionDown {
-                                    id: node_id as usize,
+                                    id: node_id,
                                 })
                                 .expect("Failed to send connection down message");
                         } else {
@@ -152,7 +171,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                 }
             }
         } else {
-            println!("[ACTOR {}] Connection lost", self.id_connection.unwrap());
+            println!("[ACTOR {}] Connection lost", self.id_connection.clone().unwrap());
             ctx.stop();
         }
     }
@@ -167,7 +186,7 @@ impl HealthConnection {
     ///
     /// # Returns
     /// Un `Addr<HealthConnection>` que representa el actor creado.
-    pub fn create_actor(stream: TcpStream, id_connection: usize, self_id: usize) -> Addr<HealthConnection> {
+    pub fn create_actor(stream: TcpStream, id_connection: String, self_id: String) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
             let (read_half, write_half) = split(stream);
             HealthConnection::add_stream(LinesStream::new(BufReader::new(read_half).lines()), ctx);
@@ -189,7 +208,7 @@ impl HealthConnection {
     /// * `ctx` - El contexto del actor.
     fn make_response(&mut self, response: String, ctx: &mut Context<Self>) {
         let mut write = self.write.take().expect("[ERROR] - NEW MESSAGE RECEIVED");
-        let id = self.id_connection.unwrap();
+        let id = self.id_connection.clone().unwrap();
         wrap_future::<_, Self>(async move {
             match write.write_all(format!("{}\n", response).as_bytes()).await {
                 Ok(_) => Ok(write),
@@ -312,14 +331,14 @@ impl Handler<Reconnection> for HealthConnection {
     type Result = ();
 
     fn handle(&mut self, msg: Reconnection, _ctx: &mut Self::Context) -> Self::Result {
-        self.make_response(format!("RC {}", msg.node_id), _ctx);
+        self.make_response(format!("RC {} {} {} ", msg.node_id, msg.ip, msg.port), _ctx);
     }
 }
 impl Handler<ID> for HealthConnection {
     type Result = ();
 
     fn handle(&mut self, msg: ID, _ctx: &mut Self::Context) -> Self::Result {
-        self.make_response(format!("ID {}", msg.id), _ctx);
+        self.make_response(format!("ID {} {} {}", msg.id, msg.ip, msg.port), _ctx);
     }
 }
 
