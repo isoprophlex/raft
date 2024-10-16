@@ -91,17 +91,19 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 Some("ID") => {
-                    if let (Some(Ok(id)), Some(ip), Some(Ok(port))) = (
+                    if let (Some(Ok(id)), Some(ip), Some(Ok(port)), Some(Ok(should_broadcast))) = (
                         words.next().map( |w| w.parse::<String>()),
                         words.next().map(|w| w.to_string()),
                         words.next().map(|w| w.parse::<usize>()),
+                        words.next().map(|w| w.parse::<bool>())
                     ) {
+                        println!("Handle ID, old_id: {:?}, new_id: {:?}", self.id_connection.clone().unwrap(), id);
                         let _ = self.backend_actor.clone().unwrap().try_send(UpdateID {
                             ip,
                             port,
                             new_id: id.clone(),
                             old_id: self.id_connection.clone().unwrap(),
-                            
+                            should_broadcast
                         });
 
                         if id != self.id_connection.clone().unwrap() {
@@ -338,7 +340,7 @@ impl Handler<ID> for HealthConnection {
     type Result = ();
 
     fn handle(&mut self, msg: ID, _ctx: &mut Self::Context) -> Self::Result {
-        self.make_response(format!("ID {} {} {}", msg.id, msg.ip, msg.port), _ctx);
+        self.make_response(format!("ID {} {} {} {}", msg.id, msg.ip, msg.port, msg.just_arrived), _ctx);
     }
 }
 

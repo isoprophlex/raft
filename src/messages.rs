@@ -100,6 +100,7 @@ pub struct ID {
     pub ip: String,
     pub port: usize,
     pub id: String,
+    pub just_arrived: bool,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -108,4 +109,5 @@ pub struct UpdateID {
     pub port: usize,
     pub old_id: String,
     pub new_id: String,
+    pub should_broadcast: bool
 }

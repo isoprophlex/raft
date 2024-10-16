@@ -82,7 +82,7 @@ impl ConsensusModule {
             println!("Node {} connected to Node {}", self_id, node_id);
 
             let actor_addr = HealthConnection::create_actor(stream, node_id.clone(), self_id.clone());
-            actor_addr.try_send(ID { ip: self_ip.clone(), port: self_port, id: self_id.clone() }).expect("Error sending ID");
+            actor_addr.try_send(ID { ip: self_ip.clone(), port: self_port, id: self_id.clone(), just_arrived: true }).expect("Error sending ID");
             connection_map.insert(node_id.clone(), actor_addr);
         }
 
@@ -426,7 +426,22 @@ impl Handler<HB> for ConsensusModule {
         self.election_reset_event = Instant::now();
         println!("Election reset event updated");
 
-        let leader_actor = self.connection_map.get(&self.leader_id.clone().unwrap()).unwrap();
+        let leader_id = match &self.leader_id {
+            Some(id) => id,
+            None => {
+                println!("I don't have a leader, ignoring heartbeat");
+                return
+            }
+        };
+
+        let leader_actor = match self.connection_map.get(leader_id) {
+            Some(actor) => actor,
+            None => {
+                println!("Leader not found in connection map, ignoring heartbeat");
+                return
+            }
+        };
+
         match leader_actor.try_send(Ack { term: msg.term }) {
             Ok(_) => {}
             Err(e) => {
@@ -481,6 +496,8 @@ impl Handler<Reconnection> for ConsensusModule {
         let addr = format!("{}:{}", msg.ip, msg.port);
         let future_stream = TcpStream::connect(addr);
 
+        let self_ip = self.ip.clone();
+        let self_port = self.port;
         let node_id = self.node_id.clone();
         let myself_clone = self.myself.clone();
         let ctx_clone = _ctx.address();
@@ -491,7 +508,7 @@ impl Handler<Reconnection> for ConsensusModule {
             match future_stream.await {
                 Ok(stream) => {
                     println!("Successfully reconnected to Node {}", msg.node_id);
-                    let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone(), node_id);
+                    let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone(), node_id.clone());
 
                     // Enviamos el mensaje de reconexión al líder para que actualice el connection_map y lo añada a heartbeats
                     ctx_clone
@@ -502,6 +519,10 @@ impl Handler<Reconnection> for ConsensusModule {
                     actor_addr
                         .try_send(AddBackend { node: myself_clone.unwrap() })
                         .expect("Failed to send AddBackend");
+
+                    actor_addr
+                        .try_send(ID { ip: self_ip, port: self_port, id: node_id, just_arrived: false })
+                        .expect("Failed to send ID");
                     actor_addr
                         .try_send(NewLeader { id: leader_id.unwrap(), term: cur_term })
                         .expect("Failed to send NewLeader");
@@ -519,15 +540,15 @@ impl Handler<UpdateID> for ConsensusModule {
 
     fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {    
         if self.id_is_connected(&msg.old_id) {
-            self.update_id(msg);
-            return
+            self.update_id(&msg);
         }
 
-        println!("Connection with ID {} not found", msg.old_id);
-        println!("Connection map: {:?}", self.connection_map);
+        println!("Updated id");
         
-        // Si no se encuentra la conexión, se envía un mensaje de reconexión a todos los nodos
-        self.send_reconnection_msg(msg.ip, msg.port, msg.old_id);
+        if msg.should_broadcast {
+            // Si no se encuentra la conexión, se envía un mensaje de reconexión a todos los nodos
+            self.send_reconnection_msg(msg.ip, msg.port, msg.new_id);
+        }
     }
 }
 
@@ -536,7 +557,7 @@ impl ConsensusModule {
         self.connection_map.contains_key(id)
     }
 
-    fn update_id(&mut self, msg: UpdateID) {
+    fn update_id(&mut self, msg: &UpdateID) {
         if let Some(connection) = self.connection_map.remove(&msg.old_id) { // si estaba 127.0.0.1:65117, lo borro
             self.connection_map.insert(msg.new_id.clone(), connection); // node2
             println!("Updated connection ID from {} to {}", msg.old_id, msg.new_id.clone());
@@ -545,7 +566,12 @@ impl ConsensusModule {
     }
 
     fn send_reconnection_msg(&mut self, ip: String, port: usize, id: String) {
-        for (_, addr) in &self.connection_map {
+        println!("Sending Reconnection message to all nodes");
+        for (connection_id, addr) in &self.connection_map {
+            if *connection_id == id {
+                continue;
+            }
+
             addr.try_send(Reconnection { ip: ip.clone(), port, node_id: id.clone() })
                     .expect("Error sending Reconnection message");
         }
