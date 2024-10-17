@@ -91,13 +91,13 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 Some("ID") => {
+                    println!("ID received");
                     if let (Some(Ok(id)), Some(ip), Some(Ok(port)), Some(Ok(should_broadcast))) = (
                         words.next().map( |w| w.parse::<String>()),
                         words.next().map(|w| w.to_string()),
                         words.next().map(|w| w.parse::<usize>()),
                         words.next().map(|w| w.parse::<bool>())
                     ) {
-                        println!("Handle ID, old_id: {:?}, new_id: {:?}", self.id_connection.clone().unwrap(), id);
                         let _ = self.backend_actor.clone().unwrap().try_send(UpdateID {
                             ip,
                             port,
@@ -166,14 +166,18 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 _ => {
+                    let id_connection = match self.id_connection {
+                        Some(ref id) => id.clone(),
+                        None => "Unknown".to_string(),
+                    };
                     println!(
-                        "[CONNECTION {:?}] MESSAGE RECEIVED: {:?}",
-                        self.id_connection, line
+                        "[{:?}]: {:?}",
+                        id_connection, line, 
                     )
                 }
             }
         } else {
-            println!("[ACTOR {}] Connection lost", self.id_connection.clone().unwrap());
+            println!("[{:?}] Connection lost", self.id_connection);
             ctx.stop();
         }
     }
@@ -215,7 +219,7 @@ impl HealthConnection {
             match write.write_all(format!("{}\n", response).as_bytes()).await {
                 Ok(_) => Ok(write),
                 Err(e) => {
-                    println!("[ACTOR {}] Failed to send message: {}", id, e);
+                    eprintln!("[ACTOR {}] Failed to send message: {}", id, e);
                     Err(write)
                 }
             }

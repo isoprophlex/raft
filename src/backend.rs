@@ -5,8 +5,13 @@ use crate::node_config::NodesConfig;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::time::Instant;
+use inline_colorization::*;
+use std::fs::File;
+use std::io::{Write, Read};
+use chrono::{DateTime, Utc};
+use std::time::SystemTime;
 
 /// Raft RPCs
 #[derive(Clone)]
@@ -49,6 +54,33 @@ impl Actor for ConsensusModule {
 }
 
 impl ConsensusModule {
+    // Function to check and initialize the node file if it's the first run
+    fn is_first_time_running(file_path: &str) -> bool {
+        let mut  first_run = false;
+        // Node was previously initialized, not the first run
+        if let Ok(mut file) = File::open(file_path) {
+            let mut timestamp = String::new();
+            file.read_to_string(&mut timestamp).unwrap();
+            println!("\nNode already ran in the past. Last run: {}", timestamp);
+        } else {
+            println!("\nFirst time running the node");
+            first_run = true;
+        }
+        Self::update_timestamp(file_path);
+        first_run
+    }
+
+    fn update_timestamp(file_path: &str) {
+        let mut file = File::create(file_path).expect("Failed to create initialization file");
+        
+        // Convert SystemTime to DateTime<Utc> directly
+        let current_time = SystemTime::now();
+        let datetime: DateTime<Utc> = current_time.into();
+        let formatted_time = datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+
+        file.write_all(formatted_time.as_bytes()).expect("Failed to write timestamp");
+    }
+
     /// Inicia las conexiones entre nodos en función del `node_id` y `total_nodes`.
     ///
     /// # Arguments
@@ -60,26 +92,37 @@ impl ConsensusModule {
     /// Un nuevo módulo de consenso con el mapa de conexiones inicializado.
     pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig) -> Self {
         let mut connection_map = HashMap::new();
-
         let self_port = self_port + 3000; // TODO: this must be deleted or just be "8000" 
+
+        let file_path = format!("init_history/init_{}.txt", self_id);
+        let first_run = Self::is_first_time_running(&file_path);
 
         for node in nodes_config.nodes {
 
-            println!("\n>>>Node name: {:?}, ip: {}, port: {}", node.name, node.ip, node.port);
+            println!("\n{color_green}>>> Node name: {:?}, ip: {}, port: {}{style_reset}", node.name, node.ip, node.port);
 
             let node_ip = node.ip;
             let node_port = node.port.parse::<usize>().unwrap() + 3000; // TODO: dejar 8000);
             let node_id = node.name;
 
-            // Si el nodo es el mismo que el actual, se deja de establecer conexiones
+            // Si el nodo es el mismo que el actual, se deja de establecer conexiones (primera vez) o se sigue con otros nodos (reconexión)
             if node_ip == self_ip && node_port == self_port {
-                println!("Stopping connection to self");
-                break;
+                println!("{color_magenta}Is self.{style_reset}");
+                if first_run {
+                    break;
+                }
+                continue;
             }
 
             let addr = format!("{}:{}", node_ip, node_port); 
-            let stream = TcpStream::connect(addr).await.unwrap();
-            println!("Node {} connected to Node {}", self_id, node_id);
+            let stream = match TcpStream::connect(addr).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    println!("{color_magenta}Could not connect to Node {}: {}{style_reset}", node_id, e);
+                    continue;
+                }
+            };
+            println!("{color_green}Node {} connected to Node {}{style_reset}", self_id, node_id);
 
             let actor_addr = HealthConnection::create_actor(stream, node_id.clone(), self_id.clone());
             actor_addr.try_send(ID { ip: self_ip.clone(), port: self_port, id: self_id.clone(), just_arrived: true }).expect("Error sending ID");
@@ -107,15 +150,15 @@ impl ConsensusModule {
     pub fn start_election(&mut self) {
         self.state = Candidate;
         self.current_term += 1;
-        println!("NEW CURRENT TERM: {}", self.current_term);
+        println!("{color_yellow}[START ELECTION] NEW CURRENT TERM: {}{style_reset}", self.current_term);
 
         self.election_reset_event = Instant::now();
         let connection_clone = self.connection_map.clone();
-        if connection_clone.len() == 1 {
+        if connection_clone.len() < 1 {
             self.state = State::Leader;
         }
         for (id, connection) in connection_clone {
-            println!("Sending StartElection to Node {}, connection: {:?}", id, connection);
+            println!("[START ELECTION] Sending StartElection to Node {}", id);
             match connection.try_send(StartElection {
                 id: self.node_id.clone(),
                 term: self.current_term,
@@ -139,27 +182,31 @@ impl ConsensusModule {
 
     /// Inicia el temporizador de elecciones y verifica el tiempo transcurrido
     /// para determinar si debe comenzar una nueva elección.
+    /// El último nodo, aunque se reconecte, siempre llama a elecciones.
     pub fn run_election_timer(&mut self) {
         let timeout_duration = self.election_timeout();
         let term_started = self.current_term;
         println!(
-            "[NODE {}] ELECTION TIMER STARTED {}, TERM: {}",
-            self.node_id,
+            "[TIMER] ELECTION TIMER STARTED {}, TERM: {}",
             timeout_duration.as_millis(),
             term_started
         );
         loop {
-            if self.state != State::Candidate && self.state != Follower {
-                println!("[NODE {}] I'M THE CURRENT LEADER", self.node_id);
+            // If it's the leader
+            // if self.state != State::Candidate && self.state != Follower {
+            if self.state == State::Leader {
                 return;
             }
+
+            // If it's NOT the leader
             if term_started != self.current_term {
                 println!(
-                    "[NODE {}] IN ELECTION TIMER TERM CHANGED FROM {} TO {}",
-                    self.node_id, term_started, self.current_term
+                    "[TIMER] IN ELECTION TIMER TERM CHANGED FROM {} TO {}",
+                    term_started, self.current_term
                 );
                 return;
             }
+
             let elapsed = Instant::now().duration_since(self.election_reset_event);
             //println!("ELAPSED: {}", elapsed.as_millis());
             if elapsed >= timeout_duration {
@@ -175,7 +222,6 @@ impl ConsensusModule {
 
     pub async fn add_me_to_connections(&self, ctx: Addr<ConsensusModule>) {
         for connection in self.connection_map.values() {
-            println!("{:?}", ctx);
             connection
                 .send(AddBackend {
                     node: ctx.clone(),
@@ -186,17 +232,17 @@ impl ConsensusModule {
     }
 
     pub fn check_votes(&mut self, _ctx: &mut Context<Self>, vote_term: u16) {
-        println!("I GOT A VOTE ON TERM: {}", vote_term);
+        println!("[CHECK VOTES] I GOT A VOTE ON TERM: {}", vote_term);
         if vote_term > self.current_term as u16 {
-            println!("I'm out of date, now I become a follower.");
+            println!("[CHECK VOTES] I'm out of date, I become a follower.");
             self.state = Follower;
             self.votes = Some(0);
             return;
         } else if vote_term as usize == self.current_term {
             self.votes = Some(self.votes.unwrap() + 1);
-            println!("Votes earned: {}", self.votes.unwrap());
+            println!("[CHECK VOTES] Votes earned: {}", self.votes.unwrap());
         }
-        if self.votes.unwrap() >= (self.connection_map.len() as u16 / 2) + 1 {
+        if self.votes.unwrap() >= (self.connection_map.len() as u16 / 2) + 1 && self.state != State::Leader{
             // Im leader
             self.become_leader(_ctx);
         }
@@ -210,8 +256,7 @@ impl ConsensusModule {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
         println!(
-            "Node {} becomes Leader; term={}",
-            self.node_id, self.current_term
+            "{color_blue}[NODE {}] I'M THE LEADER NOW, TERM: {}{style_reset}", self.node_id, self.current_term
         );
         self.announce_leader(ctx);
 
@@ -232,7 +277,7 @@ impl ConsensusModule {
                     Ok(_) => {}
                     Err(e) => {
                         println!(
-                            "[ACTOR] Error sending Heartbeat to connection {}: {}",
+                            "{color_red}[❤️] Error sending Heartbeat to connection {}: {}{style_reset}",
                             id, e
                         );
                         ids_to_delete.push(id.clone());
@@ -253,7 +298,7 @@ impl ConsensusModule {
             }
 
             if actor.state != State::Leader {
-                println!("Node {} is no longer the Leader", node_id);
+                println!("{color_blue}Node {} is no longer the Leader{style_reset}", node_id);
                 ctx.stop();
             }
         });
@@ -285,19 +330,18 @@ impl ConsensusModule {
         }
 
         let timeout_duration = self.election_timeout();
+        let current_term = self.current_term;
         let node_id = self.node_id.clone();
 
         let handle = ctx.run_interval(timeout_duration, move |actor, _ctx| {
             let elapsed = Instant::now().duration_since(actor.election_reset_event);
             println!(
-                "[NODE {}] Checking heartbeat... Elapsed: {} ms",
-                node_id,
+                "{color_red}[❤️] Checking heartbeat... Elapsed: {} ms{style_reset}",
                 elapsed.as_millis()
             );
             if actor.state == State::Leader {
                 println!(
-                    "[NODE {}] I'm the leader, stopping heartbeat check",
-                    node_id
+                    "{color_blue}[NODE {}] I'M THE LEADER NOW{style_reset}. Stopping heartbeat check.", node_id
                 );
                 _ctx.cancel_future(actor.heartbeat_check_handle.unwrap());
                 actor.heartbeat_check_handle = None;
@@ -306,8 +350,7 @@ impl ConsensusModule {
 
             if elapsed >= timeout_duration {
                 println!(
-                    "[NODE {}] No heartbeat received, starting election",
-                    node_id
+                    "{color_red}[❤️] No heartbeat received, starting election{style_reset}",
                 );
                 actor.start_election();
             }
@@ -321,7 +364,6 @@ impl Handler<AddNode> for ConsensusModule {
 
     fn handle(&mut self, msg: AddNode, _ctx: &mut Self::Context) -> Self::Result {
         self.connection_map.insert(msg.id.clone(), msg.node);
-        println!("Node {} added to connections", msg.id);
     }
 }
 impl Handler<RequestedOurVote> for ConsensusModule {
@@ -330,13 +372,13 @@ impl Handler<RequestedOurVote> for ConsensusModule {
     fn handle(&mut self, msg: RequestedOurVote, _ctx: &mut Context<Self>) -> Self::Result {
         let vote_term = msg.term;
         println!(
-            "Received vote request from {} in term {}",
+            "{color_yellow}[VOTE] Received vote request from {} in term {}{style_reset}",
             msg.candidate_id, msg.term
         );
 
         // If the candidate is out of date, send NewLeader
         if msg.term < self.current_term {
-            println!("The candidate is out of date, sending NewLeader");
+            println!("{color_yellow}[VOTE] The candidate is out of date, sending NewLeader{style_reset}");
             let connection = self.connection_map.get(&msg.candidate_id).unwrap();
             connection
                 .try_send(NewLeader {
@@ -349,7 +391,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
 
         // Si no se ha votado o el último voto fue cero, se vota
         if self.last_vote.is_none() || self.last_vote == Some(0) {
-            println!("First election!");
+            println!("{color_yellow}[VOTE] First election!{style_reset}");
             self.last_vote = Some(msg.term);
             let lock = self.connection_map.clone();
             let actor = lock.get(&msg.candidate_id).unwrap();
@@ -370,7 +412,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                 })
                 .expect("Error sending VOTE HIM to connection");
         } else if vote_term == self.current_term { // Si el término de la votación es igual al actual, no se vota
-            println!("I have already voted!");
+            println!("{color_yellow}[VOTE] I have already voted!{style_reset}");
             let lock = self.connection_map.clone();
             let actor = lock.get(&msg.candidate_id).unwrap();
             actor
@@ -386,7 +428,7 @@ impl Handler<Vote> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: Vote, _ctx: &mut Self::Context) -> Self::Result {
-        println!("Received vote from {} in term {}", msg.id, msg.term);
+        println!("{color_bright_yellow}[VOTE] Received vote from {} in term {}{style_reset}", msg.id, msg.term);
         self.check_votes(_ctx, msg.term as u16);
     }
 }
@@ -402,7 +444,7 @@ impl Handler<NewLeader> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: NewLeader, _ctx: &mut Self::Context) -> Self::Result {
-        println!("We have a new leader: {}", msg.id);
+        println!("{color_blue}[NEW LEADER]: {}{style_reset}", msg.id);
         self.leader_id = Some(msg.id);
         if self.leader_id != Some(self.node_id.clone()) {
             self.state = Follower;
@@ -418,18 +460,18 @@ impl Handler<HB> for ConsensusModule {
 
     fn handle(&mut self, msg: HB, _ctx: &mut Self::Context) -> Self::Result {
         if self.current_term < msg.term as usize {
-            println!("I was out of date, updating to {}", msg.term);
+            println!("{color_red}[❤️] I was out of date, updating to {}{style_reset}", msg.term);
             self.current_term = msg.term as usize;
             return
         }
 
         self.election_reset_event = Instant::now();
-        println!("Election reset event updated");
+        println!("{color_red}[❤️] Election reset event updated{style_reset}");
 
         let leader_id = match &self.leader_id {
             Some(id) => id,
             None => {
-                println!("I don't have a leader, ignoring heartbeat");
+                println!("{color_red}[❤️] I don't have a leader, ignoring heartbeat{style_reset}");
                 return
             }
         };
@@ -437,7 +479,7 @@ impl Handler<HB> for ConsensusModule {
         let leader_actor = match self.connection_map.get(leader_id) {
             Some(actor) => actor,
             None => {
-                println!("Leader not found in connection map, ignoring heartbeat");
+                println!("{color_red}[❤️] Leader not found in connection map, ignoring heartbeat{style_reset}");
                 return
             }
         };
@@ -445,7 +487,7 @@ impl Handler<HB> for ConsensusModule {
         match leader_actor.try_send(Ack { term: msg.term }) {
             Ok(_) => {}
             Err(e) => {
-                println!("[ACTOR] Error sending ACK to connection leader: {}", e);
+                println!("{color_red}[❤️] Error sending ACK to connection leader: {}{style_reset}", e);
                 self.connection_map.remove_entry(&self.leader_id.clone().unwrap());
                 self.run_election_timer();
             }
@@ -461,7 +503,7 @@ impl Handler<No> for ConsensusModule {
         println!("Received NO in term {}", msg.term);
 
         if vote_term > self.current_term as u16 {
-            println!("I'm out of date, now I become a follower.");
+            println!("[VOTE] I'm out of date, now I become a follower.");
             self.state = State::Follower;
         }
     }
@@ -487,11 +529,10 @@ impl Handler<Reconnection> for ConsensusModule {
 
     fn handle(&mut self, msg: Reconnection, _ctx: &mut Self::Context) -> Self::Result {
         if self.connection_map.contains_key(&msg.node_id) {
-            println!("Connection with Node {} already exists", msg.node_id);
             return;
         }
 
-        println!("Reconnecting to Node {}", msg.node_id);
+        println!("{color_green}[CONNECT] Connecting to Node {}{style_reset}", msg.node_id);
 
         let addr = format!("{}:{}", msg.ip, msg.port);
         let future_stream = TcpStream::connect(addr);
@@ -507,7 +548,7 @@ impl Handler<Reconnection> for ConsensusModule {
         actix::spawn(async move {
             match future_stream.await {
                 Ok(stream) => {
-                    println!("Successfully reconnected to Node {}", msg.node_id);
+                    println!("{color_green}[CONNECT] Successfully connected to Node {}{style_reset}", msg.node_id);
                     let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone(), node_id.clone());
 
                     // Enviamos el mensaje de reconexión al líder para que actualice el connection_map y lo añada a heartbeats
@@ -523,9 +564,12 @@ impl Handler<Reconnection> for ConsensusModule {
                     actor_addr
                         .try_send(ID { ip: self_ip, port: self_port, id: node_id, just_arrived: false })
                         .expect("Failed to send ID");
-                    actor_addr
-                        .try_send(NewLeader { id: leader_id.unwrap(), term: cur_term })
-                        .expect("Failed to send NewLeader");
+
+                    if let Some(leader_id) = leader_id {
+                        actor_addr
+                            .try_send(NewLeader { id: leader_id, term: cur_term })
+                            .expect("Failed to send NewLeader");
+                    }
                 }
                 Err(e) => {
                     println!("Failed to reconnect to Node {}: {}", msg.node_id, e);
@@ -542,12 +586,11 @@ impl Handler<UpdateID> for ConsensusModule {
         if self.id_is_connected(&msg.old_id) {
             self.update_id(&msg);
         }
-
-        println!("Updated id");
         
         if msg.should_broadcast {
-            // Si no se encuentra la conexión, se envía un mensaje de reconexión a todos los nodos
-            self.send_reconnection_msg(msg.ip, msg.port, msg.new_id);
+            self.try_send_new_leader(msg.new_id.clone());
+            // Se envía un mensaje de reconexión a todos los nodos
+            //self.try_send_reconnection_msg(msg.ip, msg.port, msg.new_id);
         }
     }
 }
@@ -560,20 +603,44 @@ impl ConsensusModule {
     fn update_id(&mut self, msg: &UpdateID) {
         if let Some(connection) = self.connection_map.remove(&msg.old_id) { // si estaba 127.0.0.1:65117, lo borro
             self.connection_map.insert(msg.new_id.clone(), connection); // node2
-            println!("Updated connection ID from {} to {}", msg.old_id, msg.new_id.clone());
+            println!("[CONNECT] Updated connection ID from {} to {}", msg.old_id, msg.new_id.clone());
             return
         }
     }
 
-    fn send_reconnection_msg(&mut self, ip: String, port: usize, id: String) {
-        println!("Sending Reconnection message to all nodes");
+    fn try_send_new_leader(&self, new_id: String) {
+        if self.leader_id.is_none() {
+            return;
+        }
+        let leader_id = match self.leader_id.clone() {
+            Some(id) => id,
+            None => return,
+        };
+
+        if let Some(leader_actor) = self.connection_map.get(&new_id) {
+            leader_actor
+                .try_send(NewLeader {
+                    id: leader_id,
+                    term: self.current_term,
+                })
+                .expect("Error sending NewLeader to new leader");
+        }
+    }
+
+    fn try_send_reconnection_msg(&mut self, ip: String, port: usize, id: String) {
+        println!("[CONNECT] Attempting to send Reconnection message to all other nodes in connection_map: {:?}", self.connection_map.keys());
         for (connection_id, addr) in &self.connection_map {
             if *connection_id == id {
                 continue;
             }
 
-            addr.try_send(Reconnection { ip: ip.clone(), port, node_id: id.clone() })
-                    .expect("Error sending Reconnection message");
+            match addr.try_send(Reconnection { ip: ip.clone(), port, node_id: id.clone() }) {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("[CONNECT] Error sending Reconnection({}) to Node {}: {}.", id, connection_id, e);
+                }
+            }
         }
+        println!("[CONNECT] Finished attempts");
     }
 }

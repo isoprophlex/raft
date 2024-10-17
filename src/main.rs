@@ -46,8 +46,7 @@ impl RaftNode {
 
         self.address = Some(ctx.address());
 
-        let nodes_count = nodes_config.nodes.len();
-        let last_node = nodes_config.nodes.get(nodes_count - 1).unwrap();
+        let last_node = nodes_config.nodes.get(self.total_nodes - 1).unwrap();
         
         if self.ip == last_node.ip && self.port == last_node.port.parse().unwrap() {
             println!("Running election timer");
@@ -126,6 +125,11 @@ async fn main() {
                 ip: "127.0.0.1".to_string(),
                 port: "5435".to_string(),
                 name: "node3".to_string(),
+            },
+            Node {
+                ip: "127.0.0.1".to_string(),
+                port: "5436".to_string(),
+                name: "node4".to_string(),
             }
         ]
     };
