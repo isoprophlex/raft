@@ -92,7 +92,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                 }
                 Some("ID") => {
                     println!("ID received");
-                    if let (Some(Ok(id)), Some(ip), Some(Ok(port)), Some(Ok(should_broadcast))) = (
+                    if let (Some(Ok(id)), Some(ip), Some(Ok(port)), Some(Ok(expects_leader))) = (
                         words.next().map( |w| w.parse::<String>()),
                         words.next().map(|w| w.to_string()),
                         words.next().map(|w| w.parse::<usize>()),
@@ -103,7 +103,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                             port,
                             new_id: id.clone(),
                             old_id: self.id_connection.clone().unwrap(),
-                            should_broadcast
+                            expects_leader
                         });
 
                         if id != self.id_connection.clone().unwrap() {

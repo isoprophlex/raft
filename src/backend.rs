@@ -1,6 +1,6 @@
 use crate::backend::State::{Candidate, Follower};
 use crate::health_connection::HealthConnection;
-use crate::messages::{AddBackend, AddNode, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer, RequestedOurVote, StartElection, Vote, Ack, HB, NewConnection, Reconnection, ID, UpdateID};
+use crate::messages::{Ack, AddBackend, AddNode, AskIfLeader, ConnectionDown, Coordinator, Heartbeat, NewConnection, NewLeader, No, Reconnection, RequestAnswer, RequestedOurVote, StartElection, UpdateID, Vote, HB, ID};
 use crate::node_config::NodesConfig;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use std::collections::HashMap;
@@ -587,11 +587,17 @@ impl Handler<UpdateID> for ConsensusModule {
             self.update_id(&msg);
         }
         
-        if msg.should_broadcast {
+        if msg.expects_leader {
             self.try_send_new_leader(msg.new_id.clone());
-            // Se envía un mensaje de reconexión a todos los nodos
-            //self.try_send_reconnection_msg(msg.ip, msg.port, msg.new_id);
         }
+    }
+}
+
+impl Handler<AskIfLeader> for ConsensusModule {
+    type Result = bool;
+
+    fn handle(&mut self, _msg: AskIfLeader, _ctx: &mut Self::Context) -> bool {
+        self.state == State::Leader
     }
 }
 
@@ -625,22 +631,5 @@ impl ConsensusModule {
                 })
                 .expect("Error sending NewLeader to new leader");
         }
-    }
-
-    fn try_send_reconnection_msg(&mut self, ip: String, port: usize, id: String) {
-        println!("[CONNECT] Attempting to send Reconnection message to all other nodes in connection_map: {:?}", self.connection_map.keys());
-        for (connection_id, addr) in &self.connection_map {
-            if *connection_id == id {
-                continue;
-            }
-
-            match addr.try_send(Reconnection { ip: ip.clone(), port, node_id: id.clone() }) {
-                Ok(_) => {}
-                Err(e) => {
-                    println!("[CONNECT] Error sending Reconnection({}) to Node {}: {}.", id, connection_id, e);
-                }
-            }
-        }
-        println!("[CONNECT] Finished attempts");
     }
 }

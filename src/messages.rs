@@ -109,5 +109,9 @@ pub struct UpdateID {
     pub port: usize,
     pub old_id: String,
     pub new_id: String,
-    pub should_broadcast: bool
+    pub expects_leader: bool
 }
+
+#[derive(Message)]
+#[rtype(result = "bool")]
+pub struct AskIfLeader;

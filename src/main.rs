@@ -1,10 +1,8 @@
 use crate::backend::ConsensusModule;
-use crate::messages::NewConnection;
-use actix::clock::sleep;
-use actix::{Actor, Addr, AsyncContext, Context, System};
+use crate::messages::{NewConnection, AskIfLeader};
+use actix::{Addr, AsyncContext, Context};
 use actix_rt::spawn;
 use std::env;
-use std::time::Duration;
 use node_config::{Node, NodesConfig};
 use tokio::net::TcpListener;
 
@@ -13,7 +11,7 @@ mod health_connection;
 mod messages;
 mod node_config;
 
-struct RaftNode {
+struct RaftNode { // TODO rename, sacar "Node"
     node_id: String,
     ip: String,
     port: usize,
@@ -83,6 +81,18 @@ impl RaftNode {
             }
         }
     }
+
+    pub async fn is_leader(&self) -> bool {
+        if let Some(backend) = &self.address {
+            return match backend.send(AskIfLeader {}).await {
+                Ok(is_leader) => {
+                    return is_leader;
+                },
+                Err(_) => false,
+            };
+        }
+        false
+    }
 }
 
 #[actix_rt::main]
@@ -106,7 +116,7 @@ async fn main() {
     .parse()
     .expect("Invalid port, must be a number");
 
-    let mut raft_node = RaftNode::new(node_id, "127.0.0.1".to_string(), port, total_nodes);
+    let mut raft_node = RaftNode::new(node_id, "127.0.0.1".to_string(), port, total_nodes); // TODO total_nodes can be just "2" so it stars election when two nodes are connected
 
     // TODO this is for local testing. Delete this
     let nodes = NodesConfig {
