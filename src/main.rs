@@ -11,7 +11,7 @@ mod health_connection;
 mod messages;
 mod node_config;
 
-struct RaftNode { // TODO rename, sacar "Node"
+struct RaftModule {
     node_id: String,
     ip: String,
     port: usize,
@@ -19,9 +19,9 @@ struct RaftNode { // TODO rename, sacar "Node"
     address: Option<Addr<ConsensusModule>>,
 }
 
-impl RaftNode {
+impl RaftModule {
     pub fn new(node_id: String, ip: String, port: usize, total_nodes: usize) -> Self {
-        RaftNode {
+        RaftModule {
             node_id,
             ip,
             port,
@@ -38,7 +38,7 @@ impl RaftNode {
         let ctx = Context::<ConsensusModule>::new();
         let mut backend = ConsensusModule::start_connections(self.ip.clone(), self.port, self.node_id.clone(), nodes_config_copy).await;
 
-        let join = spawn(RaftNode::listen_for_connections(node_id, self.ip.clone(), self.port, ctx.address()));
+        let join = spawn(RaftModule::listen_for_connections(node_id, self.ip.clone(), self.port, ctx.address()));
         backend.add_myself(ctx.address());
         backend.add_me_to_connections(ctx.address()).await;
 
@@ -116,7 +116,7 @@ async fn main() {
     .parse()
     .expect("Invalid port, must be a number");
 
-    let mut raft_node = RaftNode::new(node_id, "127.0.0.1".to_string(), port, total_nodes); // TODO total_nodes can be just "2" so it stars election when two nodes are connected
+    let mut raft_node = RaftModule::new(node_id, "127.0.0.1".to_string(), port, total_nodes); // TODO total_nodes can be just "2" so it stars election when two nodes are connected
 
     // TODO this is for local testing. Delete this
     let nodes = NodesConfig {
