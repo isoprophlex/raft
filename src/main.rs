@@ -10,7 +10,7 @@ mod backend;
 mod health_connection;
 mod messages;
 mod node_config;
-
+const MINIMUM_AMOUNT_FOR_ELECTION: usize = 2;
 struct RaftModule {
     node_id: String,
     ip: String,
@@ -98,25 +98,22 @@ impl RaftModule {
 #[actix_rt::main]
 async fn main() {
 
-    // cargo run node1 3 5433
+    // cargo run node1 5433
 
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 4 {
+    if args.len() < 3 {
         eprintln!("Usage: {} <node_id> <total_nodes>", args[0]);
         std::process::exit(1);
     }
 
     let node_id = args[1].to_string();
-    let total_nodes: usize = args[2]
-        .parse()
-        .expect("Invalid total_nodes, must be a number");
     
-    let port: usize = args[3]
+    let port: usize = args[2]
     .parse()
     .expect("Invalid port, must be a number");
 
-    let mut raft_node = RaftModule::new(node_id, "127.0.0.1".to_string(), port, total_nodes); // TODO total_nodes can be just "2" so it stars election when two nodes are connected
+    let mut raft_node = RaftModule::new(node_id, "127.0.0.1".to_string(), port, MINIMUM_AMOUNT_FOR_ELECTION);
 
     // TODO this is for local testing. Delete this
     let nodes = NodesConfig {
