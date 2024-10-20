@@ -88,7 +88,6 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                     }
                 }
                 Some("ID") => {
-                    println!("ID received");
                     if let (Some(id), Some(ip), Some(port), Some(expects_leader)) = (
                         words.next().and_then(|w| w.parse::<String>().ok()),
                         words.next().map(|w| w.to_string()),
@@ -159,11 +158,10 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                 }
                 _ => {
                     let id_connection = self.id_connection.clone().unwrap_or_else(|| "Unknown".to_string());
-                    println!("[{:?}]: {:?}", id_connection, line);
                 }
             }
         } else {
-            println!("[{:?}] Connection lost", self.id_connection);
+            eprintln!("[{:?}] Connection lost", self.id_connection);
             ctx.stop();
         }
     }

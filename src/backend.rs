@@ -190,7 +190,6 @@ impl ConsensusModule {
             self.state = State::Leader;
         }
         for (id, connection) in connection_clone {
-            println!("[START ELECTION] Sending StartElection to Node {}", id);
             match connection.try_send(StartElection {
                 id: self.node_id.clone(),
                 term: self.current_term,
@@ -231,10 +230,6 @@ impl ConsensusModule {
 
             // If it's NOT the leader
             if term_started != self.current_term {
-                println!(
-                    "[TIMER] IN ELECTION TIMER TERM CHANGED FROM {} TO {}",
-                    term_started, self.current_term
-                );
                 return;
             }
 
@@ -301,11 +296,10 @@ impl ConsensusModule {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
         println!(
-            "{color_blue}[NODE {}] I'M THE LEADER NOW, TERM: {}{style_reset}", self.node_id, self.current_term
+            "{color_blue}[NODE {}] I'm the new leader, term: {}{style_reset}", self.node_id, self.current_term
         );
         self.announce_leader(ctx);
 
-        // Cancelar cualquier manejo anterior de heartbeats si existe
         if let Some(handle) = self.heartbeat_handle.take() {
             ctx.cancel_future(handle);
         }
@@ -317,6 +311,7 @@ impl ConsensusModule {
             let mut ids_to_delete: Vec<String> = Vec::new();
 
             for (id, connection) in &mut actor.connection_map {
+                println!("{color_red}[❤️] Sending Heartbeat to connection {} {style_reset}", id);
                 match connection.try_send(Heartbeat { term: current_term }) {
                     Ok(_) => {}
                     Err(e) => {
@@ -382,14 +377,10 @@ impl ConsensusModule {
 
         let handle = ctx.run_interval(timeout_duration, move |actor, _ctx| {
             let elapsed = Instant::now().duration_since(actor.election_reset_event);
-            println!(
-                "{color_red}[❤️] Checking heartbeat... Elapsed: {} ms{style_reset}",
-                elapsed.as_millis()
-            );
 
             if actor.state == State::Leader {
                 println!(
-                    "{color_blue}[NODE {}] I'M THE LEADER NOW{style_reset}. Stopping heartbeat check.", node_id
+                    "{color_blue}[NODE {}] I'm the new leader{style_reset}\n. Stopping heartbeat check.", node_id
                 );
                 if let Some(check_handle) = actor.heartbeat_check_handle.take() {
                     _ctx.cancel_future(check_handle);
@@ -423,14 +414,9 @@ impl Handler<RequestedOurVote> for ConsensusModule {
 
     fn handle(&mut self, msg: RequestedOurVote, _ctx: &mut Context<Self>) -> Self::Result {
         let vote_term = msg.term;
-        println!(
-            "{color_yellow}[VOTE] Received vote request from {} in term {}{style_reset}",
-            msg.candidate_id, msg.term
-        );
 
         // Si el candidato está desactualizado, se envía NewLeader
         if msg.term < self.current_term {
-            println!("{color_yellow}[VOTE] The candidate is out of date, sending NewLeader{style_reset}");
             if let Some(connection) = self.connection_map.get(&msg.candidate_id) {
                 if let Some(leader_id) = &self.leader_id {
                     if let Err(e) = connection.try_send(NewLeader {
@@ -446,7 +432,6 @@ impl Handler<RequestedOurVote> for ConsensusModule {
 
         // Si no se ha votado o el último voto fue cero, se vota
         if self.last_vote.is_none() || self.last_vote == Some(0) {
-            println!("{color_yellow}[VOTE] First election!{style_reset}");
             self.last_vote = Some(msg.term);
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
                 if let Err(e) = actor.try_send(RequestAnswer {
@@ -457,7 +442,6 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                 }
             }
         } else if vote_term > self.current_term { // Si el término de la votación es mayor al actual, se vota
-            println!("I have to vote!");
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
                 if let Err(e) = actor.try_send(RequestAnswer {
                     msg: "VOTE".to_string(),
@@ -467,7 +451,6 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                 }
             }
         } else if vote_term == self.current_term { // Si el término de la votación es igual al actual, no se vota
-            println!("{color_yellow}[VOTE] I have already voted!{style_reset}");
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
                 if let Err(e) = actor.try_send(RequestAnswer {
                     msg: "NO".to_string(),
@@ -522,7 +505,6 @@ impl Handler<HB> for ConsensusModule {
         }
 
         self.election_reset_event = Instant::now();
-        println!("{color_red}[❤️] Election reset event updated{style_reset}");
 
         let leader_id = match &self.leader_id {
             Some(id) => id,
@@ -556,7 +538,6 @@ impl Handler<No> for ConsensusModule {
 
     fn handle(&mut self, msg: No, _ctx: &mut Self::Context) -> Self::Result {
         let vote_term = msg.term;
-        println!("Received NO in term {}", msg.term);
 
         if vote_term > self.current_term as u16 {
             println!("[VOTE] I'm out of date, now I become a follower.");
@@ -675,7 +656,6 @@ impl ConsensusModule {
     fn update_id(&mut self, msg: &UpdateID) {
         if let Some(connection) = self.connection_map.remove(&msg.old_id) { // si estaba 127.0.0.1:65117, lo borro
             self.connection_map.insert(msg.new_id.clone(), connection); // node2
-            println!("[CONNECT] Updated connection ID from {} to {}", msg.old_id, msg.new_id.clone());
             return
         }
     }
