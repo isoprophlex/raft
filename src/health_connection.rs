@@ -48,132 +48,123 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
             let mut words = line.split_whitespace();
             match words.next() {
                 Some("RV") => {
-                    if let (Some(Ok(candidate_node)), Some(Ok(term))) = (
-                        words.next().map(|w| w.parse::<String>()),
-                        words.next().map(|w| w.parse::<u16>()),
+                    if let (Some(candidate_node), Some(term)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
+                        words.next().and_then(|w| w.parse::<u16>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(RequestedOurVote {
                                     candidate_id: candidate_node,
                                     term: term as usize,
-                                })
-                                .expect("Failed to send message");
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("VOTE") => {
-                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>()) {
+                    if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(Vote {
-                                    id: self.id_connection.clone().unwrap(),
+                                    id: self.id_connection.clone().unwrap_or_default(),
                                     term: term.into(),
-                                })
-                                .expect("Failed to send message");
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("HB") => {
-                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>()) {
-                        let _ = self.backend_actor.clone().unwrap().try_send(HB { term });
+                    if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            let _ = backend_addr.clone().try_send(HB { term });
+                        }
                     }
                 }
                 Some("NO") => {
-                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>()) {
-                        let _ = self.backend_actor.clone().unwrap().try_send(No { term });
+                    if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            let _ = backend_addr.clone().try_send(No { term });
+                        }
                     }
                 }
                 Some("ID") => {
                     println!("ID received");
-                    if let (Some(Ok(id)), Some(ip), Some(Ok(port)), Some(Ok(expects_leader))) = (
-                        words.next().map( |w| w.parse::<String>()),
+                    if let (Some(id), Some(ip), Some(port), Some(expects_leader)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
                         words.next().map(|w| w.to_string()),
-                        words.next().map(|w| w.parse::<usize>()),
-                        words.next().map(|w| w.parse::<bool>())
+                        words.next().and_then(|w| w.parse::<usize>().ok()),
+                        words.next().and_then(|w| w.parse::<bool>().ok()),
                     ) {
-                        let _ = self.backend_actor.clone().unwrap().try_send(UpdateID {
-                            ip,
-                            port,
-                            new_id: id.clone(),
-                            old_id: self.id_connection.clone().unwrap(),
-                            expects_leader
-                        });
+                        if let Some(backend_addr) = &self.backend_actor {
+                            let _ = backend_addr.clone().try_send(UpdateID {
+                                ip,
+                                port,
+                                new_id: id.clone(),
+                                old_id: self.id_connection.clone().unwrap_or_default(),
+                                expects_leader,
+                            });
 
-                        if id != self.id_connection.clone().unwrap() {
-                            self.id_connection = Some(id);
+                            if id != self.id_connection.clone().unwrap_or_default() {
+                                self.id_connection = Some(id);
+                            }
                         }
                     }
                 }
-
-
                 Some("NL") => {
-                    if let (Some(Ok(leader_node)), Some(Ok(term))) = (
-                        words.next().map(|w| w.parse::<String>()),
-                        words.next().map(|w| w.parse::<u16>()),
+                    if let (Some(leader_node), Some(term)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
+                        words.next().and_then(|w| w.parse::<u16>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(NewLeader {
                                     id: leader_node,
                                     term: term as usize,
-                                })
-                                .expect("Failed to send message");
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("RC") => {
-                    if let (Some(Ok(id)), Some(ip), Some(Ok(port))) = (
-                        words.next().map( |w| w.parse::<String>()),
+                    if let (Some(id), Some(ip), Some(port)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
                         words.next().map(|w| w.to_string()),
-                        words.next().map(|w| w.parse::<usize>()),
+                        words.next().and_then(|w| w.parse::<usize>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(Reconnection {
                                     node_id: id,
                                     ip,
-                                    port
-                                })
-                                .expect("Failed to send reconnection message");
+                                    port,
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("CD") => {
-                    if let Some(Ok(node_id)) = words.next().map(|w| w.parse::<String>()) {
+                    if let Some(node_id) = words.next().and_then(|w| w.parse::<String>().ok()) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
-                                .try_send(ConnectionDown {
-                                    id: node_id,
-                                })
-                                .expect("Failed to send connection down message");
+                                .try_send(ConnectionDown { id: node_id });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 _ => {
-                    let id_connection = match self.id_connection {
-                        Some(ref id) => id.clone(),
-                        None => "Unknown".to_string(),
-                    };
-                    println!(
-                        "[{:?}]: {:?}",
-                        id_connection, line, 
-                    )
+                    let id_connection = self.id_connection.clone().unwrap_or_else(|| "Unknown".to_string());
+                    println!("[{:?}]: {:?}", id_connection, line);
                 }
             }
         } else {
@@ -182,7 +173,6 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
         }
     }
 }
-
 impl HealthConnection {
     /// Crea un nuevo actor `HealthConnection` a partir de una conexión TCP.
     ///
