@@ -156,9 +156,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         }
                     }
                 }
-                _ => {
-                    let id_connection = self.id_connection.clone().unwrap_or_else(|| "Unknown".to_string());
-                }
+                _ => {}
             }
         } else {
             eprintln!("[{:?}] Connection lost", self.id_connection);

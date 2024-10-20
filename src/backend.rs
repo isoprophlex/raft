@@ -182,7 +182,7 @@ impl ConsensusModule {
     pub fn start_election(&mut self) {
         self.state = Candidate;
         self.current_term += 1;
-        println!("{color_yellow}[START ELECTION] NEW CURRENT TERM: {}{style_reset}", self.current_term);
+        println!("{color_yellow}[START ELECTION] New current term: {}{style_reset}", self.current_term);
 
         self.election_reset_event = Instant::now();
         let connection_clone = self.connection_map.clone();
@@ -223,7 +223,6 @@ impl ConsensusModule {
         );
         loop {
             // If it's the leader
-            // if self.state != State::Candidate && self.state != Follower {
             if self.state == State::Leader {
                 return;
             }
@@ -415,7 +414,6 @@ impl Handler<RequestedOurVote> for ConsensusModule {
     fn handle(&mut self, msg: RequestedOurVote, _ctx: &mut Context<Self>) -> Self::Result {
         let vote_term = msg.term;
 
-        // Si el candidato está desactualizado, se envía NewLeader
         if msg.term < self.current_term {
             if let Some(connection) = self.connection_map.get(&msg.candidate_id) {
                 if let Some(leader_id) = &self.leader_id {
@@ -430,7 +428,6 @@ impl Handler<RequestedOurVote> for ConsensusModule {
             return;
         }
 
-        // Si no se ha votado o el último voto fue cero, se vota
         if self.last_vote.is_none() || self.last_vote == Some(0) {
             self.last_vote = Some(msg.term);
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
@@ -441,7 +438,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     eprintln!("Error sending VOTE HIM to connection: {}", e);
                 }
             }
-        } else if vote_term > self.current_term { // Si el término de la votación es mayor al actual, se vota
+        } else if vote_term > self.current_term {
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
                 if let Err(e) = actor.try_send(RequestAnswer {
                     msg: "VOTE".to_string(),
@@ -450,7 +447,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     eprintln!("Error sending VOTE HIM to connection: {}", e);
                 }
             }
-        } else if vote_term == self.current_term { // Si el término de la votación es igual al actual, no se vota
+        } else if vote_term == self.current_term {
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
                 if let Err(e) = actor.try_send(RequestAnswer {
                     msg: "NO".to_string(),
@@ -483,7 +480,6 @@ impl Handler<NewLeader> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: NewLeader, _ctx: &mut Self::Context) -> Self::Result {
-        println!("{color_blue}[NEW LEADER]: {}{style_reset}", msg.id);
         self.leader_id = Some(msg.id);
         if self.leader_id != Some(self.node_id.clone()) {
             self.state = Follower;
@@ -588,7 +584,6 @@ impl Handler<Reconnection> for ConsensusModule {
                     println!("{color_green}[CONNECT] Successfully connected to Node {}{style_reset}", msg.node_id);
                     let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone());
 
-                    // Enviamos el mensaje de reconexión al líder para que actualice el connection_map y lo añada a heartbeats
                     if let Err(e) = ctx_clone
                         .send(AddNode { id: msg.node_id.clone(), node: actor_addr.clone() })
                         .await
