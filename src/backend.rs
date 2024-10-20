@@ -138,7 +138,7 @@ impl ConsensusModule {
             };
             println!("{color_green}Node {} connected to Node {}{style_reset}", self_id, node_id);
 
-            let actor_addr = HealthConnection::create_actor(stream, node_id.clone(), self_id.clone());
+            let actor_addr = HealthConnection::create_actor(stream, node_id.clone());
             if let Err(e) = actor_addr.try_send(ID {
                 ip: self_ip.clone(),
                 port: self_port,
@@ -358,7 +358,6 @@ impl ConsensusModule {
         }
 
         let timeout_duration = self.election_timeout();
-        let current_term = self.current_term;
         let node_id = self.node_id.clone();
 
         let handle = ctx.run_interval(timeout_duration, move |actor, _ctx| {
@@ -550,7 +549,7 @@ impl Handler<NewConnection> for ConsensusModule {
 
     fn handle(&mut self, msg: NewConnection, _ctx: &mut Self::Context) -> Self::Result {
 
-        let actor_addr = HealthConnection::create_actor(msg.stream, msg.id_connection.clone(), self.node_id.clone());
+        let actor_addr = HealthConnection::create_actor(msg.stream, msg.id_connection.clone());
         self.connection_map.insert(msg.id_connection, actor_addr.clone());
 
         if let Some(myself_addr) = &self.myself {
@@ -586,9 +585,8 @@ impl Handler<Reconnection> for ConsensusModule {
             match future_stream.await {
                 Ok(stream) => {
                     println!("{color_green}[CONNECT] Successfully connected to Node {}{style_reset}", msg.node_id);
-                    let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone(), node_id.clone());
+                    let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone());
 
-                    // Enviamos el mensaje de reconexión al líder para que actualice el connection_map y lo añada a heartbeats
                     if let Err(e) = ctx_clone
                         .send(AddNode { id: msg.node_id.clone(), node: actor_addr.clone() })
                         .await

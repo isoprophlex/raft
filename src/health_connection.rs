@@ -6,15 +6,11 @@ use crate::messages::{AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLea
 use actix::fut::wrap_future;
 use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use std::collections::HashMap;
-use std::future::Future;
-use futures::executor::block_on;
 use tokio::io::{split, AsyncBufReadExt, BufReader};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
 };
-use tokio::net::TcpListener;
-use tokio::net::unix::SocketAddr;
 use tokio_stream::wrappers::LinesStream;
 
 /// Actor que maneja las conexiones de salud y comunicación entre nodos.
@@ -23,7 +19,6 @@ use tokio_stream::wrappers::LinesStream;
 /// a través de la conexión TCP establecida.
 pub struct HealthConnection {
     write: Option<WriteHalf<TcpStream>>,
-    self_id: String,
     id_connection: Option<String>,
     other_actors: HashMap<String, Addr<HealthConnection>>,
     backend_actor: Option<Addr<ConsensusModule>>,
@@ -182,7 +177,7 @@ impl HealthConnection {
     ///
     /// # Returns
     /// Un `Addr<HealthConnection>` que representa el actor creado.
-    pub fn create_actor(stream: TcpStream, id_connection: String, self_id: String) -> Addr<HealthConnection> {
+    pub fn create_actor(stream: TcpStream, id_connection: String) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
             let (read_half, write_half) = split(stream);
             HealthConnection::add_stream(LinesStream::new(BufReader::new(read_half).lines()), ctx);
@@ -192,7 +187,6 @@ impl HealthConnection {
                 other_actors: HashMap::new(),
                 backend_actor: None,
                 current_term: 0,
-                self_id
             }
         })
     }
@@ -214,7 +208,7 @@ impl HealthConnection {
                 }
             }
         })
-            .map(move |result, this, ctx| match result {
+            .map(move |result, this, _ctx| match result {
                 Ok(write) => {
                     this.write = Some(write);
                 }
