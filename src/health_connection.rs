@@ -12,11 +12,10 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_stream::wrappers::LinesStream;
-
-/// Actor que maneja las conexiones de salud y comunicación entre nodos.
+/// Actor who manages Health connections and communication between nodes.
 ///
-/// Este actor se encarga de recibir y procesar mensajes de otros nodos y enviar respuestas
-/// a través de la conexión TCP establecida.
+/// These actors send and receives messages from another nodes and responses sending
+/// TCP packets.
 pub struct HealthConnection {
     write: Option<WriteHalf<TcpStream>>,
     id_connection: Option<String>,
@@ -30,14 +29,15 @@ impl Actor for HealthConnection {
 }
 
 impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
-    /// Maneja los mensajes entrantes desde la conexión TCP.
+    /// Manages messages arriving from TCP connections
     ///
-    /// Procesa las líneas recibidas, decodifica los comandos y envía los mensajes apropiados
-    /// al actor de backend o maneja la desconexión si ocurre un error.
+    /// This handler processes lines, decodes them and sends them to backend actor or, if it fails,
+    /// it manages disconnections.
     ///
     /// # Arguments
-    /// * `read` - El resultado de la lectura de una línea desde la conexión TCP.
-    /// * `ctx` - El contexto del actor.
+    /// * `read` - Result from reading from TCP.
+    /// * `ctx` - Actor's context.
+
     fn handle(&mut self, read: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(line) = read {
             let mut words = line.split_whitespace();
@@ -191,11 +191,10 @@ impl HealthConnection {
         })
     }
 
-    /// Envía una respuesta a través de la conexión TCP.
-    ///
+    /// Sends and answers by TCP link.
     /// # Arguments
-    /// * `response` - La respuesta a enviar.
-    /// * `ctx` - El contexto del actor.
+    /// * `response` - Answer.
+    /// * `ctx` - Actor's context.
     fn make_response(&mut self, response: String, ctx: &mut Context<Self>) {
         let mut write = self.write.take().expect("[ERROR] - NEW MESSAGE RECEIVED");
         let id = self.id_connection.clone().unwrap();
@@ -223,13 +222,6 @@ impl HealthConnection {
 impl Handler<StartElection> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `StartElection` para iniciar una nueva elección.
-    ///
-    /// Envía una solicitud de voto al actor de backend.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `StartElection` que contiene el identificador del candidato y el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: StartElection, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
     }
@@ -238,13 +230,6 @@ impl Handler<StartElection> for HealthConnection {
 impl Handler<RequestAnswer> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `RequestAnswer` para responder a una solicitud de voto.
-    ///
-    /// Actualiza el término actual y envía una respuesta al actor de backend.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `RequestAnswer` que contiene la respuesta y el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: RequestAnswer, ctx: &mut Self::Context) -> Self::Result {
         self.current_term = msg.term;
         self.make_response(format!("{} {}", msg.msg, msg.term), ctx);
@@ -254,11 +239,6 @@ impl Handler<RequestAnswer> for HealthConnection {
 impl Handler<AddBackend> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `AddBackend` para establecer el actor de backend.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `AddBackend` que contiene la dirección del actor de backend.
-    /// * `_ctx` - El contexto del actor.
     fn handle(&mut self, msg: AddBackend, _ctx: &mut Self::Context) -> Self::Result {
         self.backend_actor = Some(msg.node);
     }
@@ -267,11 +247,6 @@ impl Handler<AddBackend> for HealthConnection {
 impl Handler<ConnectionDown> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `ConnectionDown` para eliminar un actor de la lista de actores conectados.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `ConnectionDown` que contiene el identificador del actor que se ha desconectado.
-    /// * `_ctx` - El contexto del actor.
     fn handle(&mut self, msg: ConnectionDown, _ctx: &mut Self::Context) -> Self::Result {
         self.other_actors.remove(&msg.id);
         self.make_response(format!("CD {}", msg.id), _ctx);
@@ -281,11 +256,6 @@ impl Handler<ConnectionDown> for HealthConnection {
 impl Handler<Ack> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `Ack` para enviar una confirmación de recepción.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `Ack` que contiene el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Ack, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("ACK {}", msg.term), ctx);
     }
@@ -294,11 +264,6 @@ impl Handler<Ack> for HealthConnection {
 impl Handler<Heartbeat> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `Heartbeat` para enviar un latido de corazón.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `Heartbeat` que contiene el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Heartbeat, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("HB {}", msg.term), ctx);
     }
@@ -307,11 +272,6 @@ impl Handler<Heartbeat> for HealthConnection {
 impl Handler<Coordinator> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `Coordinator` para anunciar un nuevo líder.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `Coordinator` que contiene el identificador del líder y el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Coordinator, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("NL {} {}", msg.id, msg.term), ctx);
     }

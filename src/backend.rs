@@ -54,7 +54,13 @@ impl Actor for ConsensusModule {
 }
 
 impl ConsensusModule {
-    // Function to check and initialize the node file if it's the first run
+    /// Checks if this is the first time running the node.
+    ///
+    /// # Arguments
+    /// * `file_path` - The path to the file where the node's run history is stored.
+    ///
+    /// # Returns
+    /// `true` if this is the first time running the node, otherwise `false`.
     fn is_first_time_running(file_path: &str) -> bool {
         let mut first_run = false;
         // Node was previously initialized, not the first run
@@ -78,10 +84,13 @@ impl ConsensusModule {
         first_run
     }
 
-
+    /// Updates the timestamp of the node's last run.
+    ///
+    /// # Arguments
+    /// * `file_path` - The path to the file where the timestamp will be written.
     fn update_timestamp(file_path: &str) {
         let mut file = File::create(file_path).expect("Failed to create initialization file");
-        
+
         // Convert SystemTime to DateTime<Utc> directly
         let current_time = SystemTime::now();
         let datetime: DateTime<Utc> = current_time.into();
@@ -90,15 +99,16 @@ impl ConsensusModule {
         file.write_all(formatted_time.as_bytes()).expect("Failed to write timestamp");
     }
 
-    /// Inicia las conexiones entre nodos en función del `node_id` y `total_nodes`.
+    /// Starts connections between nodes based on `node_id` and `total_nodes`.
     ///
     /// # Arguments
-    /// * `node_id` - El identificador del nodo actual.
-    /// * `total_nodes` - El número total de nodos en la red.
-    /// * `port` - El puerto en el que el nodo escuchará las conexiones.
+    /// * `self_ip` - The IP address of the current node.
+    /// * `self_port` - The port on which the current node will listen for connections.
+    /// * `self_id` - The identifier of the current node.
+    /// * `nodes_config` - The configuration containing all nodes in the network.
     ///
     /// # Returns
-    /// Un nuevo módulo de consenso con el mapa de conexiones inicializado.
+    /// A new consensus module with the connection map initialized.
     pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig) -> Self {
         let mut connection_map = HashMap::new();
         let self_port = self_port + 3000;
@@ -168,7 +178,7 @@ impl ConsensusModule {
         }
     }
 
-    /// Incrementa el término actual y envía mensajes de `StartElection` a los nodos conectados.
+    /// Increments the current term and sends `StartElection` messages to connected nodes.
     pub fn start_election(&mut self) {
         self.state = Candidate;
         self.current_term += 1;
@@ -194,17 +204,16 @@ impl ConsensusModule {
         }
     }
 
-    /// Calcula y devuelve el tiempo de espera para la elección.
+    /// Calculates and returns the timeout duration for elections.
     ///
     /// # Returns
-    /// Un `Duration` con un valor aleatorio para el tiempo de espera.
+    /// A `Duration` representing a random timeout value for the election.
     pub fn election_timeout(&self) -> Duration {
         Duration::from_millis(1000 + rand::random::<u64>() % 150)
     }
 
-    /// Inicia el temporizador de elecciones y verifica el tiempo transcurrido
-    /// para determinar si debe comenzar una nueva elección.
-    /// El último nodo, aunque se reconecte, siempre llama a elecciones.
+    /// Starts the election timer and checks the elapsed time to determine if a new election should be initiated.
+    /// The last node always calls elections, even when reconnecting.
     pub fn run_election_timer(&mut self) {
         let timeout_duration = self.election_timeout();
         let term_started = self.current_term;
@@ -236,11 +245,17 @@ impl ConsensusModule {
             }
         }
     }
-
+    /// Adds the current node's address to its own connection list.
+    ///
+    /// # Arguments
+    /// * `myself` - The address of the current consensus module.
     pub fn add_myself(&mut self, myself: Addr<ConsensusModule>) {
         self.myself = Option::from(myself);
     }
-
+    /// Adds the current node to the connections of all other nodes.
+    ///
+    /// # Arguments
+    /// * `ctx` - The address of the current consensus module to be added.
     pub async fn add_me_to_connections(&self, ctx: Addr<ConsensusModule>) {
         for connection in self.connection_map.values() {
             connection
@@ -251,7 +266,10 @@ impl ConsensusModule {
                 .expect("Error sending backend to connections");
         }
     }
-
+    /// Checks the votes received and updates the state accordingly.
+    ///
+    /// # Arguments
+    /// * `vote_term` - The term for which the votes are being checked.
     pub fn check_votes(&mut self, _ctx: &mut Context<Self>, vote_term: u16) {
         if vote_term > self.current_term as u16 {
             self.state = Follower;
@@ -274,11 +292,11 @@ impl ConsensusModule {
         }
     }
 
-    
-    /// Marca al nodo como líder y comienza a enviar mensajes de latido a los otros nodos.
+
+    /// Marks the node as the leader and begins sending heartbeat messages to other nodes.
     ///
     /// # Arguments
-    /// * `ctx` - El contexto de Actix necesario para manejar la ejecución asíncrona.
+    /// * `ctx` - The Actix context needed to manage asynchronous execution.
     pub fn become_leader(&mut self, ctx: &mut Context<Self>) {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
@@ -298,7 +316,6 @@ impl ConsensusModule {
         let handle = ctx.run_interval(Duration::from_millis(1000), move |actor, ctx| {
             let mut ids_to_delete: Vec<String> = Vec::new();
 
-            // Acceder al connection_map actualizado del actor
             for (id, connection) in &mut actor.connection_map {
                 match connection.try_send(Heartbeat { term: current_term }) {
                     Ok(_) => {}
@@ -334,7 +351,10 @@ impl ConsensusModule {
     }
 
 
-    /// Le manda a los actores que se anuncie como lider
+    /// Marks the node as the leader and begins sending heartbeat messages to other nodes.
+    ///
+    /// # Arguments
+    /// * `ctx` - The Actix context needed to manage asynchronous execution.
     pub fn announce_leader(&mut self, _ctx: &mut Context<Self>) {
         for actor in self.connection_map.values() {
             if let Err(e) = actor.try_send(Coordinator {
@@ -346,12 +366,12 @@ impl ConsensusModule {
         }
     }
 
-    /// Inicia un intervalo para verificar la recepción de latidos.
+    /// Starts an interval to check for heartbeat reception.
     ///
-    /// Si no se recibe un latido dentro del intervalo especificado, se inicia una nueva elección.
+    /// If no heartbeat is received within the specified interval, a new election is initiated.
     ///
     /// # Arguments
-    /// * `ctx` - El contexto de Actix para la ejecución del actor.
+    /// * `ctx` - The Actix context for the actor's execution.
     pub fn start_heartbeat_check(&mut self, ctx: &mut Context<Self>) {
         if let Some(handle) = self.heartbeat_check_handle.take() {
             ctx.cancel_future(handle);
@@ -587,6 +607,7 @@ impl Handler<Reconnection> for ConsensusModule {
                     println!("{color_green}[CONNECT] Successfully connected to Node {}{style_reset}", msg.node_id);
                     let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone());
 
+                    // Enviamos el mensaje de reconexión al líder para que actualice el connection_map y lo añada a heartbeats
                     if let Err(e) = ctx_clone
                         .send(AddNode { id: msg.node_id.clone(), node: actor_addr.clone() })
                         .await
