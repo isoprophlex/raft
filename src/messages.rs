@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct AddNode {
-    pub id: usize,
+    pub id: String,
     pub node: Addr<HealthConnection>,
 }
 
@@ -20,31 +20,31 @@ pub struct AddBackend {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Coordinator {
-    pub id: usize,
+    pub id: String,
     pub term: usize,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct NewLeader {
-    pub id: usize,
+    pub id: String,
     pub term: usize,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Vote {
-    pub id: usize,
+    pub id: String,
     pub term: usize,
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct ConnectionDown {
-    pub id: usize,
+    pub id: String,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct StartElection {
-    pub id: usize,
+    pub id: String,
     pub term: usize,
 }
 
@@ -58,7 +58,7 @@ pub struct Heartbeat {
 #[rtype(result = "()")]
 pub struct RequestedOurVote {
     pub term: usize,
-    pub candidate_id: usize,
+    pub candidate_id: String,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -84,22 +84,34 @@ pub struct Ack {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct NewConnection {
-    pub id_connection: usize,
+    pub id_connection: String,
     pub stream: TcpStream,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Reconnection {
-    pub node_id: usize,
+    pub ip: String,
+    pub port: usize,
+    pub node_id: String,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct ID {
-    pub id: usize,
+    pub ip: String,
+    pub port: usize,
+    pub id: String,
+    pub just_arrived: bool,
 }
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct UpdateID {
-    pub old_id: usize,
-    pub new_id: usize,
+    pub ip: String,
+    pub port: usize,
+    pub old_id: String,
+    pub new_id: String,
+    pub expects_leader: bool
 }
+
+#[derive(Message)]
+#[rtype(result = "bool")]
+pub struct AskIfLeader;
