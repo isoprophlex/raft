@@ -3,12 +3,11 @@ use crate::health_connection::HealthConnection;
 use crate::messages::{Ack, AddBackend, AddNode, AskIfLeader, ConnectionDown, Coordinator, Heartbeat, NewConnection, NewLeader, No, Reconnection, RequestAnswer, RequestedOurVote, StartElection, UpdateID, Vote, HB, ID};
 use crate::node_config::NodesConfig;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
+use utils_lib::*;
 use std::collections::HashMap;
-use std::env;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::Instant;
-use inline_colorization::*;
 use std::fs::File;
 use std::io::{Write, Read};
 use chrono::{DateTime, Utc};
@@ -69,14 +68,14 @@ impl ConsensusModule {
             let mut timestamp = String::new();
             match file.read_to_string(&mut timestamp) {
                 Ok(_) => {
-                    println!("\nNode already ran in the past. Last run: {}", timestamp);
+                    log!("\nNode already ran in the past. Last run: {}", timestamp);
                 }
                 Err(e) => {
-                    eprintln!("Error reading timestamp: {}", e);
+                    log!("Error reading timestamp: {}", e);
                 }
             }
         } else {
-            println!("\nFirst time running the node");
+            log!("\nFirst time running the node");
             first_run = true;
         }
 
@@ -97,7 +96,8 @@ impl ConsensusModule {
         let datetime: DateTime<Utc> = current_time.into();
         let formatted_time = datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
-        file.write_all(formatted_time.as_bytes()).expect("Failed to write timestamp");
+        let string = format!(" *** RUNNING DATE-TIME: {} ***\n", formatted_time);
+        file.write_all(string.as_bytes()).expect("Failed to write timestamp");
     }
 
     /// Starts connections between nodes based on `node_id` and `total_nodes`.
@@ -118,16 +118,17 @@ impl ConsensusModule {
             None => format!("./init_history/init_{}.txt", self_id),
         };
 
+        set_log_file!(config_file_path.as_str());
         let first_run = Self::is_first_time_running(config_file_path.as_str());
 
         for node in nodes_config.nodes {
-            println!("\n{color_green}>>> Node name: {:?}, ip: {}, port: {}{style_reset}", node.name, node.ip, node.port);
+            log_green!("\n>>> Node name: {:?}, ip: {}, port: {}", node.name, node.ip, node.port);
 
             let node_ip = node.ip;
             let node_port = match node.port.parse::<usize>() {
                 Ok(port) => port + 3000,
                 Err(e) => {
-                    println!("Error parsing port for node {}: {}", node.name, e);
+                    log!("Error parsing port for node {}: {}", node.name, e);
                     continue;
                 }
             };
@@ -135,7 +136,7 @@ impl ConsensusModule {
 
             // Si el nodo es el mismo que el actual, se detienen las conexiones si es la primera vez
             if node_ip == self_ip && node_port == self_port {
-                println!("{color_magenta}Is self.{style_reset}");
+                log_magenta!("Is self.");
                 if first_run {
                     break;
                 }
@@ -146,11 +147,11 @@ impl ConsensusModule {
             let stream = match TcpStream::connect(addr).await {
                 Ok(stream) => stream,
                 Err(e) => {
-                    println!("{color_magenta}Could not connect to Node {}: {}{style_reset}", node_id, e);
+                    log_magenta!("Could not connect to Node {}: {}", node_id, e);
                     continue;
                 }
             };
-            println!("{color_green}Node {} connected to Node {}{style_reset}", self_id, node_id);
+            log_green!("Node {} connected to Node {}", self_id, node_id);
 
             let actor_addr = HealthConnection::create_actor(stream, node_id.clone());
             if let Err(e) = actor_addr.try_send(ID {
@@ -159,7 +160,7 @@ impl ConsensusModule {
                 id: self_id.clone(),
                 just_arrived: true
             }) {
-                println!("Error sending ID to node {}: {}", node_id, e);
+                log!("Error sending ID to node {}: {}", node_id, e);
                 continue;
             }
             connection_map.insert(node_id.clone(), actor_addr);
@@ -186,7 +187,7 @@ impl ConsensusModule {
     pub fn start_election(&mut self) {
         self.state = Candidate;
         self.current_term += 1;
-        println!("{color_yellow}[START ELECTION] New current term: {}{style_reset}", self.current_term);
+        log_yellow!("[START ELECTION] New current term: {}", self.current_term);
 
         self.election_reset_event = Instant::now();
         let connection_clone = self.connection_map.clone();
@@ -201,7 +202,7 @@ impl ConsensusModule {
             }) {
                 Ok(_) => {}
                 Err(e) => {
-                    println!("Error sending StartElection to Node {}: {}", id, e);
+                    log!("Error sending StartElection to Node {}: {}", id, e);
                     self.connection_map.remove(&id);
                 }
             }
@@ -221,7 +222,7 @@ impl ConsensusModule {
     pub fn run_election_timer(&mut self) {
         let timeout_duration = self.election_timeout();
         let term_started = self.current_term;
-        println!(
+        log!(
             "[TIMER] ELECTION TIMER STARTED {}, TERM: {}",
             timeout_duration.as_millis(),
             term_started
@@ -278,7 +279,7 @@ impl ConsensusModule {
             if let Some(votes) = self.votes {
                 self.votes = Some(votes + 1);
             } else {
-                eprintln!("Error: `votes` is None when trying to increment.");
+                log!("Error: `votes` is None when trying to increment.");
                 return;
             }
         }
@@ -287,7 +288,7 @@ impl ConsensusModule {
                 self.become_leader(_ctx);
             }
         } else {
-            eprintln!("Error: `votes` is None when checking for majority.");
+            log!("Error: `votes` is None when checking for majority.");
         }
     }
 
@@ -299,8 +300,9 @@ impl ConsensusModule {
     pub fn become_leader(&mut self, ctx: &mut Context<Self>) {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
-        println!(
-            "{color_blue}[NODE {}] I'm the new leader, term: {}{style_reset}", self.node_id, self.current_term
+        
+        log_blue!(
+            "[NODE {}] I'm the new leader, term: {}", self.node_id, self.current_term
         );
         self.announce_leader(ctx);
 
@@ -315,11 +317,11 @@ impl ConsensusModule {
             let mut ids_to_delete: Vec<String> = Vec::new();
 
             for (id, connection) in &mut actor.connection_map {
-                println!("{color_red}[❤️] Sending Heartbeat to connection {} {style_reset}", id);
+                log_red!("[❤️] Sending Heartbeat to connection {}", id);
                 match connection.try_send(Heartbeat { term: current_term }) {
                     Ok(_) => {}
                     Err(e) => {
-                        println!(
+                        log!(
                             "[❤️] Error sending Heartbeat to connection {}: {}",
                             id, e
                         );
@@ -341,7 +343,7 @@ impl ConsensusModule {
             }
 
             if actor.state != State::Leader {
-                println!("{color_blue}Node {} is no longer the Leader{style_reset}", node_id);
+                log_blue!("Node {} is no longer the Leader", node_id);
                 ctx.stop();
             }
         });
@@ -360,7 +362,7 @@ impl ConsensusModule {
                 term: self.current_term,
                 id: self.node_id.clone(),
             }) {
-                eprintln!("Error sending Coordinator message to actor: {}", e);
+                log!("Error sending Coordinator message to actor: {}", e);
             }
         }
     }
@@ -383,8 +385,8 @@ impl ConsensusModule {
             let elapsed = Instant::now().duration_since(actor.election_reset_event);
 
             if actor.state == State::Leader {
-                println!(
-                    "{color_blue}[NODE {}] I'm the new leader.{style_reset}\n Stopping heartbeat check.", node_id
+                log_blue!(
+                    "[NODE {}] I'm the new leader.\n Stopping heartbeat check.", node_id
                 );
                 if let Some(check_handle) = actor.heartbeat_check_handle.take() {
                     _ctx.cancel_future(check_handle);
@@ -394,9 +396,7 @@ impl ConsensusModule {
             }
 
             if elapsed >= timeout_duration {
-                println!(
-                    "{color_red}[❤️] No heartbeat received, starting election{style_reset}",
-                );
+                log_red!("[❤️] No heartbeat received, starting election");
                 actor.start_election();
             }
         });
@@ -426,7 +426,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                         id: leader_id.clone(),
                         term: self.current_term,
                     }) {
-                        eprintln!("Error sending NewLeader to candidate: {}", e);
+                        log!("Error sending NewLeader to candidate: {}", e);
                     }
                 }
             }
@@ -440,7 +440,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     msg: "VOTE".to_string(),
                     term: vote_term,
                 }) {
-                    eprintln!("Error sending VOTE HIM to connection: {}", e);
+                    log!("Error sending VOTE HIM to connection: {}", e);
                 }
             }
         } else if vote_term > self.current_term {
@@ -449,7 +449,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     msg: "VOTE".to_string(),
                     term: vote_term,
                 }) {
-                    eprintln!("Error sending VOTE HIM to connection: {}", e);
+                    log!("Error sending VOTE HIM to connection: {}", e);
                 }
             }
         } else if vote_term == self.current_term {
@@ -458,7 +458,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     msg: "NO".to_string(),
                     term: self.current_term,
                 }) {
-                    eprintln!("Error sending NO VOTE to connection: {}", e);
+                    log!("Error sending NO VOTE to connection: {}", e);
                 }
             }
         }
@@ -469,7 +469,7 @@ impl Handler<Vote> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: Vote, _ctx: &mut Self::Context) -> Self::Result {
-        println!("{color_bright_yellow}[VOTE] Received vote from {} in term {}{style_reset}", msg.id, msg.term);
+        log_bright_yellow!("[VOTE] Received vote from {} in term {}", msg.id, msg.term);
         self.check_votes(_ctx, msg.term as u16);
     }
 }
@@ -477,7 +477,7 @@ impl Handler<ConnectionDown> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: ConnectionDown, _ctx: &mut Self::Context) -> Self::Result {
-        println!("Connection with {} lost", msg.id);
+        log!("Connection with {} lost", msg.id);
         self.connection_map.remove_entry(&msg.id);
     }
 }
@@ -492,7 +492,7 @@ impl Handler<NewLeader> for ConsensusModule {
         if self.current_term < msg.term {
             self.current_term = msg.term;
         }
-        println!("{color_bright_blue} New leader is {}", msg.id);
+        log_blue!("New leader is {}", msg.id);
         self.start_heartbeat_check(_ctx);
     }
 }
@@ -501,7 +501,7 @@ impl Handler<HB> for ConsensusModule {
 
     fn handle(&mut self, msg: HB, _ctx: &mut Self::Context) -> Self::Result {
         if self.current_term < msg.term as usize {
-            println!("{color_red}[❤️] I was out of date, updating to {}{style_reset}", msg.term);
+            log_red!("[❤️] I was out of date, updating to {}", msg.term);
             self.current_term = msg.term as usize;
             return;
         }
@@ -511,7 +511,7 @@ impl Handler<HB> for ConsensusModule {
         let leader_id = match &self.leader_id {
             Some(id) => id,
             None => {
-                println!("{color_red}[❤️] I don't have a leader, ignoring heartbeat{style_reset}");
+                log_red!("[❤️] I don't have a leader, ignoring heartbeat");
                 return;
             }
         };
@@ -519,13 +519,13 @@ impl Handler<HB> for ConsensusModule {
         let leader_actor = match self.connection_map.get(leader_id) {
             Some(actor) => actor,
             None => {
-                println!("{color_red}[❤️] Leader not found in connection map, ignoring heartbeat{style_reset}");
+                log_red!("[❤️] Leader not found in connection map, ignoring heartbeat");
                 return;
             }
         };
 
         if let Err(e) = leader_actor.try_send(Ack { term: msg.term }) {
-            println!("{color_red}[❤️] Error sending ACK to connection leader: {}{style_reset}", e);
+            log_red!("[❤️] Error sending ACK to connection leader: {}", e);
             if let Some(leader_id) = self.leader_id.clone() {
                 self.connection_map.remove(&leader_id);
             }
@@ -542,7 +542,7 @@ impl Handler<No> for ConsensusModule {
         let vote_term = msg.term;
 
         if vote_term > self.current_term as u16 {
-            println!("[VOTE] I'm out of date, now I become a follower.");
+            log!("[VOTE] I'm out of date, now I become a follower.");
             self.state = State::Follower;
         }
     }
@@ -571,7 +571,7 @@ impl Handler<Reconnection> for ConsensusModule {
             return;
         }
 
-        println!("{color_green}[CONNECT] Connecting to Node {}{style_reset}", msg.node_id);
+        log_green!("[CONNECT] Connecting to Node {}", msg.node_id);
 
         let addr = format!("{}:{}", msg.ip, msg.port);
         let future_stream = TcpStream::connect(addr);
@@ -587,19 +587,19 @@ impl Handler<Reconnection> for ConsensusModule {
         actix::spawn(async move {
             match future_stream.await {
                 Ok(stream) => {
-                    println!("{color_green}[CONNECT] Successfully connected to Node {}{style_reset}", msg.node_id);
+                    log_green!("[CONNECT] Successfully connected to Node {}", msg.node_id);
                     let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone());
 
                     if let Err(e) = ctx_clone
                         .send(AddNode { id: msg.node_id.clone(), node: actor_addr.clone() })
                         .await
                     {
-                        eprintln!("Error sending AddNode: {}", e);
+                        log!("Error sending AddNode: {}", e);
                     }
 
                     if let Some(myself) = myself_clone {
                         if let Err(e) = actor_addr.try_send(AddBackend { node: myself }) {
-                            eprintln!("Failed to send AddBackend: {}", e);
+                            log!("Failed to send AddBackend: {}", e);
                         }
                     }
 
@@ -609,17 +609,17 @@ impl Handler<Reconnection> for ConsensusModule {
                         id: node_id.clone(),
                         just_arrived: false,
                     }) {
-                        eprintln!("Failed to send ID: {}", e);
+                        log!("Failed to send ID: {}", e);
                     }
 
                     if let Some(leader_id) = leader_id {
                         if let Err(e) = actor_addr.try_send(NewLeader { id: leader_id, term: cur_term }) {
-                            eprintln!("Failed to send NewLeader: {}", e);
+                            log!("Failed to send NewLeader: {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    println!("Failed to reconnect to Node {}: {}", msg.node_id, e);
+                    log!("Failed to reconnect to Node {}: {}", msg.node_id, e);
                 }
             }
         });

@@ -1,5 +1,5 @@
-extern crate actix;
 use actix::prelude::*;
+use utils_lib::log;
 
 use crate::backend::ConsensusModule;
 use crate::messages::{AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer, RequestedOurVote, StartElection, Vote, Ack, HB, Reconnection, ID, UpdateID};
@@ -55,7 +55,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                     term: term as usize,
                                 });
                         } else {
-                            eprintln!("Backend actor is not available");
+                            log!("Backend actor is not available");
                         }
                     }
                 }
@@ -69,7 +69,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                     term: term.into(),
                                 });
                         } else {
-                            eprintln!("Backend actor is not available");
+                            log!("Backend actor is not available");
                         }
                     }
                 }
@@ -122,7 +122,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                     term: term as usize,
                                 });
                         } else {
-                            eprintln!("Backend actor is not available");
+                            log!("Backend actor is not available");
                         }
                     }
                 }
@@ -141,7 +141,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                     port,
                                 });
                         } else {
-                            eprintln!("Backend actor is not available");
+                            log!("Backend actor is not available");
                         }
                     }
                 }
@@ -152,14 +152,14 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                 .clone()
                                 .try_send(ConnectionDown { id: node_id });
                         } else {
-                            eprintln!("Backend actor is not available");
+                            log!("Backend actor is not available");
                         }
                     }
                 }
                 _ => {}
             }
         } else {
-            eprintln!("[{:?}] Connection lost", self.id_connection);
+            log!("[{:?}] Connection lost", self.id_connection);
             ctx.stop();
         }
     }
@@ -198,7 +198,7 @@ impl HealthConnection {
             match write.write_all(format!("{}\n", response).as_bytes()).await {
                 Ok(_) => Ok(write),
                 Err(e) => {
-                    eprintln!("[ACTOR {}] Failed to send message: {}", id, e);
+                    log!("[ACTOR {}] Failed to send message: {}", id, e);
                     Err(write)
                 }
             }

@@ -1,14 +1,14 @@
 use raft::{node_config::{Node, NodesConfig}, raft_module::RaftModule};
+use utils_lib::{log, set_running_local};
 use std::env;
 
 #[actix_rt::main]
 async fn main() {
-    // cargo run node1 5433
-
+    set_running_local!();
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 3 {
-        eprintln!("Usage: {} <node_id> <total_nodes>", args[0]);
+        log!("Usage: {} <node_id> <total_nodes>", args[0]);
         std::process::exit(1);
     }
 

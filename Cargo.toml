@@ -28,3 +28,4 @@ tokio-stream = { version = "^0.1.14", features = ["io-util"] }
 rand = "0.8.5"
 time = "0.1.45"
 chrono = "0.4.38"
+utils_lib = { path = "./utils_lib" }

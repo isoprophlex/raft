@@ -2,8 +2,8 @@ use crate::backend::ConsensusModule;
 use crate::messages::{AskIfLeader, NewConnection};
 use crate::node_config::{NodesConfig};
 use actix::{Addr, AsyncContext, Context};
-use actix_rt::spawn;
 use tokio::net::TcpListener;
+use utils_lib::*;
 
 const MINIMUM_AMOUNT_FOR_ELECTION: usize = 2;
 pub struct RaftModule {
@@ -55,7 +55,7 @@ impl RaftModule {
             .unwrap();
 
         if self.ip == last_node.ip && self.port == last_node.port.parse().unwrap() {
-            println!("Running election timer");
+            log!("Running election timer");
             backend.run_election_timer();
         }
 
@@ -74,12 +74,12 @@ impl RaftModule {
             .await
             .expect("Failed to bind listener");
 
-        println!("Node {} is listening on {}:{}", ip, node_id, port);
+        log!("Node {} is listening on {}:{}", ip, node_id, port);
 
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
-                    println!("Connection accepted from Node: {}", addr);
+                    log!("Connection accepted from Node: {}", addr);
                     ctx_task
                         .send(NewConnection {
                             id_connection: addr.to_string(),
@@ -89,7 +89,7 @@ impl RaftModule {
                         .expect("Error sending new message");
                 }
                 Err(e) => {
-                    eprintln!("Error accepting connection: {}", e);
+                    log!("Error accepting connection: {}", e);
                 }
             }
         }
