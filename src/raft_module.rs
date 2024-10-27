@@ -10,7 +10,7 @@ pub struct RaftModule {
     node_id: String,
     ip: String,
     port: usize,
-    address: Option<Addr<ConsensusModule>>,
+    address: Option<Addr<ConsensusModule>>
 }
 
 impl RaftModule {
@@ -23,7 +23,7 @@ impl RaftModule {
         }
     }
 
-    pub async fn start(&mut self, nodes_config: NodesConfig) {
+    pub async fn start(&mut self, nodes_config: NodesConfig, timestamp_dir: Option<&str>) {
         let node_id = self.node_id.clone();
 
         let nodes_config_copy = nodes_config.clone();
@@ -34,6 +34,7 @@ impl RaftModule {
             self.port,
             self.node_id.clone(),
             nodes_config_copy,
+            timestamp_dir
         )
         .await;
 

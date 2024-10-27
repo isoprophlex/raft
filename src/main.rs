@@ -44,5 +44,5 @@ async fn main() {
         ],
     };
 
-    raft_node.start(nodes).await;
+    raft_node.start(nodes, None).await;
 }

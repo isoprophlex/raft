@@ -109,12 +109,15 @@ impl ConsensusModule {
     ///
     /// # Returns
     /// A new consensus module with the connection map initialized.
-    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig) -> Self {
+    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>) -> Self {
         let mut connection_map = HashMap::new();
         let self_port = self_port + 3000;
+        let config_file_path = match timestamp_dir {
+            Some(path) => path.to_string(),
+            None => format!("./init_history/init_{}.txt", self_id),
+        };
 
-        let file_path = format!("init_history/init_{}.txt", self_id);
-        let first_run = Self::is_first_time_running(&file_path);
+        let first_run = Self::is_first_time_running(config_file_path.as_str());
 
         for node in nodes_config.nodes {
             println!("\n{color_green}>>> Node name: {:?}, ip: {}, port: {}{style_reset}", node.name, node.ip, node.port);
