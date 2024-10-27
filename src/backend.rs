@@ -188,6 +188,7 @@ impl ConsensusModule {
         let connection_clone = self.connection_map.clone();
         if connection_clone.len() < 1 {
             self.state = State::Leader;
+            self.leader_id = Some(self.node_id.clone());
         }
         for (id, connection) in connection_clone {
             match connection.try_send(StartElection {
@@ -315,7 +316,7 @@ impl ConsensusModule {
                     Ok(_) => {}
                     Err(e) => {
                         println!(
-                            "{color_red}[❤️] Error sending Heartbeat to connection {}: {}{style_reset}",
+                            "[❤️] Error sending Heartbeat to connection {}: {}",
                             id, e
                         );
                         ids_to_delete.push(id.clone());
@@ -379,7 +380,7 @@ impl ConsensusModule {
 
             if actor.state == State::Leader {
                 println!(
-                    "{color_blue}[NODE {}] I'm the new leader{style_reset}\n. Stopping heartbeat check.", node_id
+                    "{color_blue}[NODE {}] I'm the new leader.{style_reset}\n Stopping heartbeat check.", node_id
                 );
                 if let Some(check_handle) = actor.heartbeat_check_handle.take() {
                     _ctx.cancel_future(check_handle);
