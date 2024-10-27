@@ -38,7 +38,7 @@ impl RaftModule {
         )
         .await;
 
-        let join = spawn(RaftModule::listen_for_connections(
+        let join = tokio::spawn(RaftModule::listen_for_connections(
             node_id,
             self.ip.clone(),
             self.port,
