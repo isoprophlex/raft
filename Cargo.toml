@@ -2,6 +2,9 @@
 name = "raft"
 version = "0.1.0"
 edition = "2021"
+[lib]
+name = "raft"
+path = "src/lib.rs"
 
 [dependencies]
 libc = "0.2"
