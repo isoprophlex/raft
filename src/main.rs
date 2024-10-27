@@ -10,8 +10,8 @@ mod backend;
 mod health_connection;
 mod messages;
 mod node_config;
-
-struct RaftNode { // TODO rename, sacar "Node"
+const MINIMUM_AMOUNT_FOR_ELECTION: usize = 2;
+struct RaftModule {
     node_id: String,
     ip: String,
     port: usize,
@@ -19,9 +19,9 @@ struct RaftNode { // TODO rename, sacar "Node"
     address: Option<Addr<ConsensusModule>>,
 }
 
-impl RaftNode {
+impl RaftModule {
     pub fn new(node_id: String, ip: String, port: usize, total_nodes: usize) -> Self {
-        RaftNode {
+        RaftModule {
             node_id,
             ip,
             port,
@@ -38,7 +38,7 @@ impl RaftNode {
         let ctx = Context::<ConsensusModule>::new();
         let mut backend = ConsensusModule::start_connections(self.ip.clone(), self.port, self.node_id.clone(), nodes_config_copy).await;
 
-        let join = spawn(RaftNode::listen_for_connections(node_id, self.ip.clone(), self.port, ctx.address()));
+        let join = spawn(RaftModule::listen_for_connections(node_id, self.ip.clone(), self.port, ctx.address()));
         backend.add_myself(ctx.address());
         backend.add_me_to_connections(ctx.address()).await;
 
@@ -98,25 +98,22 @@ impl RaftNode {
 #[actix_rt::main]
 async fn main() {
 
-    // cargo run node1 3 5433
+    // cargo run node1 5433
 
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 4 {
+    if args.len() < 3 {
         eprintln!("Usage: {} <node_id> <total_nodes>", args[0]);
         std::process::exit(1);
     }
 
     let node_id = args[1].to_string();
-    let total_nodes: usize = args[2]
-        .parse()
-        .expect("Invalid total_nodes, must be a number");
     
-    let port: usize = args[3]
+    let port: usize = args[2]
     .parse()
     .expect("Invalid port, must be a number");
 
-    let mut raft_node = RaftNode::new(node_id, "127.0.0.1".to_string(), port, total_nodes); // TODO total_nodes can be just "2" so it stars election when two nodes are connected
+    let mut raft_node = RaftModule::new(node_id, "127.0.0.1".to_string(), port, MINIMUM_AMOUNT_FOR_ELECTION);
 
     // TODO this is for local testing. Delete this
     let nodes = NodesConfig {

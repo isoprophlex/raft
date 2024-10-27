@@ -6,24 +6,18 @@ use crate::messages::{AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLea
 use actix::fut::wrap_future;
 use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use std::collections::HashMap;
-use std::future::Future;
-use futures::executor::block_on;
 use tokio::io::{split, AsyncBufReadExt, BufReader};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
 };
-use tokio::net::TcpListener;
-use tokio::net::unix::SocketAddr;
 use tokio_stream::wrappers::LinesStream;
-
-/// Actor que maneja las conexiones de salud y comunicación entre nodos.
+/// Actor who manages Health connections and communication between nodes.
 ///
-/// Este actor se encarga de recibir y procesar mensajes de otros nodos y enviar respuestas
-/// a través de la conexión TCP establecida.
+/// These actors send and receives messages from another nodes and responses sending
+/// TCP packets.
 pub struct HealthConnection {
     write: Option<WriteHalf<TcpStream>>,
-    self_id: String,
     id_connection: Option<String>,
     other_actors: HashMap<String, Addr<HealthConnection>>,
     backend_actor: Option<Addr<ConsensusModule>>,
@@ -35,154 +29,141 @@ impl Actor for HealthConnection {
 }
 
 impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
-    /// Maneja los mensajes entrantes desde la conexión TCP.
+    /// Manages messages arriving from TCP connections
     ///
-    /// Procesa las líneas recibidas, decodifica los comandos y envía los mensajes apropiados
-    /// al actor de backend o maneja la desconexión si ocurre un error.
+    /// This handler processes lines, decodes them and sends them to backend actor or, if it fails,
+    /// it manages disconnections.
     ///
     /// # Arguments
-    /// * `read` - El resultado de la lectura de una línea desde la conexión TCP.
-    /// * `ctx` - El contexto del actor.
+    /// * `read` - Result from reading from TCP.
+    /// * `ctx` - Actor's context.
+
     fn handle(&mut self, read: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(line) = read {
             let mut words = line.split_whitespace();
             match words.next() {
                 Some("RV") => {
-                    if let (Some(Ok(candidate_node)), Some(Ok(term))) = (
-                        words.next().map(|w| w.parse::<String>()),
-                        words.next().map(|w| w.parse::<u16>()),
+                    if let (Some(candidate_node), Some(term)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
+                        words.next().and_then(|w| w.parse::<u16>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(RequestedOurVote {
                                     candidate_id: candidate_node,
                                     term: term as usize,
-                                })
-                                .expect("Failed to send message");
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("VOTE") => {
-                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>()) {
+                    if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(Vote {
-                                    id: self.id_connection.clone().unwrap(),
+                                    id: self.id_connection.clone().unwrap_or_default(),
                                     term: term.into(),
-                                })
-                                .expect("Failed to send message");
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("HB") => {
-                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>()) {
-                        let _ = self.backend_actor.clone().unwrap().try_send(HB { term });
-                    }
-                }
-                Some("NO") => {
-                    if let Some(Ok(term)) = words.next().map(|w| w.parse::<u16>()) {
-                        let _ = self.backend_actor.clone().unwrap().try_send(No { term });
-                    }
-                }
-                Some("ID") => {
-                    println!("ID received");
-                    if let (Some(Ok(id)), Some(ip), Some(Ok(port)), Some(Ok(expects_leader))) = (
-                        words.next().map( |w| w.parse::<String>()),
-                        words.next().map(|w| w.to_string()),
-                        words.next().map(|w| w.parse::<usize>()),
-                        words.next().map(|w| w.parse::<bool>())
-                    ) {
-                        let _ = self.backend_actor.clone().unwrap().try_send(UpdateID {
-                            ip,
-                            port,
-                            new_id: id.clone(),
-                            old_id: self.id_connection.clone().unwrap(),
-                            expects_leader
-                        });
-
-                        if id != self.id_connection.clone().unwrap() {
-                            self.id_connection = Some(id);
+                    if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            let _ = backend_addr.clone().try_send(HB { term });
                         }
                     }
                 }
-
-
-                Some("NL") => {
-                    if let (Some(Ok(leader_node)), Some(Ok(term))) = (
-                        words.next().map(|w| w.parse::<String>()),
-                        words.next().map(|w| w.parse::<u16>()),
+                Some("NO") => {
+                    if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            let _ = backend_addr.clone().try_send(No { term });
+                        }
+                    }
+                }
+                Some("ID") => {
+                    if let (Some(id), Some(ip), Some(port), Some(expects_leader)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
+                        words.next().map(|w| w.to_string()),
+                        words.next().and_then(|w| w.parse::<usize>().ok()),
+                        words.next().and_then(|w| w.parse::<bool>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr.clone().try_send(UpdateID {
+                                ip,
+                                port,
+                                new_id: id.clone(),
+                                old_id: self.id_connection.clone().unwrap_or_default(),
+                                expects_leader,
+                            });
+
+                            if id != self.id_connection.clone().unwrap_or_default() {
+                                self.id_connection = Some(id);
+                            }
+                        }
+                    }
+                }
+                Some("NL") => {
+                    if let (Some(leader_node), Some(term)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
+                        words.next().and_then(|w| w.parse::<u16>().ok()),
+                    ) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(NewLeader {
                                     id: leader_node,
                                     term: term as usize,
-                                })
-                                .expect("Failed to send message");
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("RC") => {
-                    if let (Some(Ok(id)), Some(ip), Some(Ok(port))) = (
-                        words.next().map( |w| w.parse::<String>()),
+                    if let (Some(id), Some(ip), Some(port)) = (
+                        words.next().and_then(|w| w.parse::<String>().ok()),
                         words.next().map(|w| w.to_string()),
-                        words.next().map(|w| w.parse::<usize>()),
+                        words.next().and_then(|w| w.parse::<usize>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
                                 .try_send(Reconnection {
                                     node_id: id,
                                     ip,
-                                    port
-                                })
-                                .expect("Failed to send reconnection message");
+                                    port,
+                                });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
                 Some("CD") => {
-                    if let Some(Ok(node_id)) = words.next().map(|w| w.parse::<String>()) {
+                    if let Some(node_id) = words.next().and_then(|w| w.parse::<String>().ok()) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            backend_addr
+                            let _ = backend_addr
                                 .clone()
-                                .try_send(ConnectionDown {
-                                    id: node_id,
-                                })
-                                .expect("Failed to send connection down message");
+                                .try_send(ConnectionDown { id: node_id });
                         } else {
                             eprintln!("Backend actor is not available");
                         }
                     }
                 }
-                _ => {
-                    let id_connection = match self.id_connection {
-                        Some(ref id) => id.clone(),
-                        None => "Unknown".to_string(),
-                    };
-                    println!(
-                        "[{:?}]: {:?}",
-                        id_connection, line, 
-                    )
-                }
+                _ => {}
             }
         } else {
-            println!("[{:?}] Connection lost", self.id_connection);
+            eprintln!("[{:?}] Connection lost", self.id_connection);
             ctx.stop();
         }
     }
 }
-
 impl HealthConnection {
     /// Crea un nuevo actor `HealthConnection` a partir de una conexión TCP.
     ///
@@ -192,7 +173,7 @@ impl HealthConnection {
     ///
     /// # Returns
     /// Un `Addr<HealthConnection>` que representa el actor creado.
-    pub fn create_actor(stream: TcpStream, id_connection: String, self_id: String) -> Addr<HealthConnection> {
+    pub fn create_actor(stream: TcpStream, id_connection: String) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
             let (read_half, write_half) = split(stream);
             HealthConnection::add_stream(LinesStream::new(BufReader::new(read_half).lines()), ctx);
@@ -202,16 +183,14 @@ impl HealthConnection {
                 other_actors: HashMap::new(),
                 backend_actor: None,
                 current_term: 0,
-                self_id
             }
         })
     }
 
-    /// Envía una respuesta a través de la conexión TCP.
-    ///
+    /// Sends and answers by TCP link.
     /// # Arguments
-    /// * `response` - La respuesta a enviar.
-    /// * `ctx` - El contexto del actor.
+    /// * `response` - Answer.
+    /// * `ctx` - Actor's context.
     fn make_response(&mut self, response: String, ctx: &mut Context<Self>) {
         let mut write = self.write.take().expect("[ERROR] - NEW MESSAGE RECEIVED");
         let id = self.id_connection.clone().unwrap();
@@ -224,7 +203,7 @@ impl HealthConnection {
                 }
             }
         })
-            .map(move |result, this, ctx| match result {
+            .map(move |result, this, _ctx| match result {
                 Ok(write) => {
                     this.write = Some(write);
                 }
@@ -239,13 +218,6 @@ impl HealthConnection {
 impl Handler<StartElection> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `StartElection` para iniciar una nueva elección.
-    ///
-    /// Envía una solicitud de voto al actor de backend.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `StartElection` que contiene el identificador del candidato y el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: StartElection, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("RV {} {}", msg.id, msg.term), ctx);
     }
@@ -254,13 +226,6 @@ impl Handler<StartElection> for HealthConnection {
 impl Handler<RequestAnswer> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `RequestAnswer` para responder a una solicitud de voto.
-    ///
-    /// Actualiza el término actual y envía una respuesta al actor de backend.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `RequestAnswer` que contiene la respuesta y el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: RequestAnswer, ctx: &mut Self::Context) -> Self::Result {
         self.current_term = msg.term;
         self.make_response(format!("{} {}", msg.msg, msg.term), ctx);
@@ -270,11 +235,6 @@ impl Handler<RequestAnswer> for HealthConnection {
 impl Handler<AddBackend> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `AddBackend` para establecer el actor de backend.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `AddBackend` que contiene la dirección del actor de backend.
-    /// * `_ctx` - El contexto del actor.
     fn handle(&mut self, msg: AddBackend, _ctx: &mut Self::Context) -> Self::Result {
         self.backend_actor = Some(msg.node);
     }
@@ -283,11 +243,6 @@ impl Handler<AddBackend> for HealthConnection {
 impl Handler<ConnectionDown> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `ConnectionDown` para eliminar un actor de la lista de actores conectados.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `ConnectionDown` que contiene el identificador del actor que se ha desconectado.
-    /// * `_ctx` - El contexto del actor.
     fn handle(&mut self, msg: ConnectionDown, _ctx: &mut Self::Context) -> Self::Result {
         self.other_actors.remove(&msg.id);
         self.make_response(format!("CD {}", msg.id), _ctx);
@@ -297,11 +252,6 @@ impl Handler<ConnectionDown> for HealthConnection {
 impl Handler<Ack> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `Ack` para enviar una confirmación de recepción.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `Ack` que contiene el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Ack, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("ACK {}", msg.term), ctx);
     }
@@ -310,11 +260,6 @@ impl Handler<Ack> for HealthConnection {
 impl Handler<Heartbeat> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `Heartbeat` para enviar un latido de corazón.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `Heartbeat` que contiene el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Heartbeat, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("HB {}", msg.term), ctx);
     }
@@ -323,11 +268,6 @@ impl Handler<Heartbeat> for HealthConnection {
 impl Handler<Coordinator> for HealthConnection {
     type Result = ();
 
-    /// Maneja el mensaje `Coordinator` para anunciar un nuevo líder.
-    ///
-    /// # Arguments
-    /// * `msg` - El mensaje `Coordinator` que contiene el identificador del líder y el término.
-    /// * `ctx` - El contexto del actor.
     fn handle(&mut self, msg: Coordinator, ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("NL {} {}", msg.id, msg.term), ctx);
     }
