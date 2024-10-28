@@ -12,6 +12,8 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_stream::wrappers::LinesStream;
+use crate::raft_module::RaftModule;
+
 /// Actor who manages Health connections and communication between nodes.
 ///
 /// These actors send and receives messages from another nodes and responses sending
@@ -295,3 +297,4 @@ impl Handler<NewLeader> for HealthConnection {
         self.make_response(format!("NL {} {}", msg.id, msg.term), _ctx);
     }
 }
+unsafe impl Send for HealthConnection {}

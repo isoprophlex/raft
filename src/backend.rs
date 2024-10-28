@@ -12,6 +12,7 @@ use std::fs::File;
 use std::io::{Write, Read};
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
+use crate::raft_module::RaftModule;
 
 /// Raft RPCs
 #[derive(Clone)]
@@ -680,3 +681,4 @@ impl ConsensusModule {
         }
     }
 }
+unsafe impl Send for ConsensusModule {}
