@@ -107,3 +107,4 @@ impl RaftModule {
         false
     }
 }
+unsafe impl Send for RaftModule {}
