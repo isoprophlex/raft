@@ -81,7 +81,7 @@ pub struct HB {
 pub struct Ack {
     pub term: u16,
 }
-#[derive(Message)]
+#[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct NewConnection {
     pub id_connection: String,

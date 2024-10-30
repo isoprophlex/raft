@@ -1,8 +1,12 @@
-use crate::backend::ConsensusModule;
+use std::thread;
+
+use crate::backend::{self, ConsensusModule};
 use crate::messages::{AskIfLeader, NewConnection};
 use crate::node_config::{NodesConfig};
-use actix::{Addr, AsyncContext, Context};
-use tokio::net::TcpListener;
+use actix::{Addr, AsyncContext, Context, System};
+use actix_rt::task;
+use futures::executor::block_on;
+use tokio::net::{TcpListener, TcpStream};
 use utils_lib::*;
 
 const MINIMUM_AMOUNT_FOR_ELECTION: usize = 2;
@@ -10,7 +14,7 @@ pub struct RaftModule {
     node_id: String,
     ip: String,
     port: usize,
-    address: Option<Addr<ConsensusModule>>
+    pub address: Option<Addr<ConsensusModule>>
 }
 
 impl RaftModule {
@@ -23,75 +27,129 @@ impl RaftModule {
         }
     }
 
-    pub async fn start(&mut self, nodes_config: NodesConfig, timestamp_dir: Option<&str>) {
+    pub async fn start(&mut self, nodes_config: NodesConfig, init_history_path: Option<String>) {   
+
         let node_id = self.node_id.clone();
-
         let nodes_config_copy = nodes_config.clone();
+        let ip = self.ip.clone();
+        let port = self.port;
 
-        let ctx = Context::<ConsensusModule>::new();
-        let mut backend = ConsensusModule::start_connections(
-            self.ip.clone(),
-            self.port,
-            self.node_id.clone(),
-            nodes_config_copy,
-            timestamp_dir
-        )
-        .await;
+        let handle = actix::spawn(async move {
+            println!("[RAFT] start async 1/6");
 
-        let join = tokio::spawn(RaftModule::listen_for_connections(
-            node_id,
-            self.ip.clone(),
-            self.port,
-            ctx.address(),
-        ));
-        backend.add_myself(ctx.address());
-        backend.add_me_to_connections(ctx.address()).await;
+            let mut backend = ConsensusModule::start_connections(
+                ip.clone(),
+                port,
+                node_id.clone(),
+                nodes_config_copy,
+                init_history_path
+            )
+            .await;
+        
+            let ctx = Context::<ConsensusModule>::new();
+            println!("[RAFT] start async 2/6");
+            backend.add_myself(ctx.address());
+            backend.add_me_to_connections(ctx.address()).await;
+            
+            println!("[RAFT] start async 3/6");
 
-        self.address = Some(ctx.address());
+            let last_node = nodes_config
+                .nodes
+                .get(MINIMUM_AMOUNT_FOR_ELECTION - 1)
+                .unwrap();
 
-        let last_node = nodes_config
-            .nodes
-            .get(MINIMUM_AMOUNT_FOR_ELECTION - 1)
-            .unwrap();
+            println!("[RAFT] start async 4/6");
+            if ip == last_node.ip && port == ((last_node.port.parse::<usize>().unwrap()) + 2000) {
+                log!("Running election timer");
+                backend.run_election_timer();
+            }
 
-        if self.ip == last_node.ip && self.port == last_node.port.parse().unwrap() {
-            log!("Running election timer");
-            backend.run_election_timer();
+            println!("[RAFT] start async 5/6");
+            (ctx, backend)
+        });
+
+        match handle.await {
+            Ok((ctx, backend)) => {
+                self.address = Some(ctx.address());
+                ctx.run(backend);
+            }
+            Err(e) => {
+                println!("[RAFT] Error starting Raft module: {:?}", e);
+            }
         }
-
-        ctx.run(backend);
-        join.await.expect("Error in join.await");
+        println!("[RAFT] start async 6/6");
     }
 
-    pub async fn listen_for_connections(
-        node_id: String,
-        ip: String,
-        port: usize,
-        ctx_task: Addr<ConsensusModule>,
-    ) {
-        let port = port + 3000;
-        let listener = TcpListener::bind(format!("{}:{}", ip, port))
-            .await
-            .expect("Failed to bind listener");
+    pub fn listen_for_connections(port: usize, ip: String, node_id: String, ctx_task: Addr<ConsensusModule>) {
+        println!("[RAFT] Listening for connections on port: {}", port);
+        let listener = match std::net::TcpListener::bind(format!("{}:{}", ip, port)) {
+            Ok(listener) => listener,
+            Err(e) => {
+                println!("[RAFT] Error binding listener: {:?}", e);
+                return;
+            }
+        };
 
-        log!("Node {} is listening on {}:{}", ip, node_id, port);
+        log!("Node {} is listening on {}:{}", node_id, ip, port);
+        println!("[RAFT] Node {} is listening on {}:{}", node_id, ip, port);
 
-        loop {
-            match listener.accept().await {
-                Ok((stream, addr)) => {
-                    log!("Connection accepted from Node: {}", addr);
-                    ctx_task
-                        .send(NewConnection {
-                            id_connection: addr.to_string(),
-                            stream,
-                        })
-                        .await
-                        .expect("Error sending new message");
+        RaftModule::accept_connections(listener, ctx_task);
+        println!("[RAFT] Listening cnxs, final");
+    }
+
+    fn accept_connections(listener: std::net::TcpListener, ctx_task: Addr<ConsensusModule>) {
+        println!("[RAFT] Accepting Connections");
+
+        thread::spawn( move || {
+            System::new().block_on(async {
+                println!("[RAFT] Accepting Connections 2");
+                RaftModule::accept_connections_loop(listener, ctx_task).await;
+            });
+        });
+    }
+
+    async fn accept_connections_loop(listener: std::net::TcpListener, ctx_task: Addr<ConsensusModule>) {
+        println!("[RAFT] Accepting Connections Loop");
+        loop {      
+            println!("[RAFT] listening...");
+            let result = match listener.accept() {
+                Ok((tcp_stream, addr)) => {
+                    Some((tcp_stream, addr))
                 }
                 Err(e) => {
-                    log!("Error accepting connection: {}", e);
+                    println!("[RAFT] couldn't get client: {:?}", e);
+                    None
                 }
-            }
+            };
+
+            let (tcp_stream, addr) = match result {
+                Some((stream, addr)) => (stream, addr),
+                None => {
+                    break; // continue?
+                }
+            };
+
+            log!("Connection accepted from Node: {}", addr);
+
+            let stream = match TcpStream::from_std(tcp_stream) {
+                Ok(stream) => stream,
+                Err(e) => {
+                    println!("[RAFT] Error converting to tokio stream: {:?}", e);
+                    continue;
+                }
+            };
+            
+            println!("[RAFT] creating msg");;
+            let msg = NewConnection {
+                id_connection: addr.to_string(),
+                stream,
+            };
+
+            // Now we send the message using ctx_task.send(msg) inside a thread
+
+            block_on(async {
+                _ = ctx_task.send(msg).await;
+            });
         }
     }
 

@@ -111,10 +111,9 @@ impl ConsensusModule {
     ///
     /// # Returns
     /// A new consensus module with the connection map initialized.
-    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>) -> Self {
+    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, init_history_path: Option<String>) -> Self {
         let mut connection_map = HashMap::new();
-        let self_port = self_port + 3000;
-        let config_file_path = match timestamp_dir {
+        let config_file_path = match init_history_path {
             Some(path) => path.to_string(),
             None => format!("./init_history/init_{}.txt", self_id),
         };
@@ -123,18 +122,22 @@ impl ConsensusModule {
         let first_run = Self::is_first_time_running(config_file_path.as_str());
 
         for node in nodes_config.nodes {
+            
             log_green!("\n>>> Node name: {:?}, ip: {}, port: {}", node.name, node.ip, node.port);
 
+            // Node Data to compare with self
             let node_ip = node.ip;
             let node_port = match node.port.parse::<usize>() {
-                Ok(port) => port + 3000,
+                Ok(port) => port + 2000,
                 Err(e) => {
                     log!("Error parsing port for node {}: {}", node.name, e);
                     continue;
                 }
             };
-            let node_id = node.name;
 
+            println!("Node IP: {}, Node Port: {}", node_ip, node_port);
+            println!("Self IP: {}, Self Port: {}", self_ip, self_port);
+            
             // Si el nodo es el mismo que el actual, se detienen las conexiones si es la primera vez
             if node_ip == self_ip && node_port == self_port {
                 log_magenta!("Is self.");
@@ -143,12 +146,13 @@ impl ConsensusModule {
                 }
                 continue;
             }
-
+            
+            let node_id = node.name;
             let addr = format!("{}:{}", node_ip, node_port);
-            let stream = match TcpStream::connect(addr).await {
+            let stream = match TcpStream::connect(addr.clone()).await {
                 Ok(stream) => stream,
                 Err(e) => {
-                    log_magenta!("Could not connect to Node {}: {}", node_id, e);
+                    log_magenta!("Could not connect to Node {} at addr {}: {}", node_id, addr, e);
                     continue;
                 }
             };
@@ -257,8 +261,10 @@ impl ConsensusModule {
     ///
     /// # Arguments
     /// * `ctx` - The address of the current consensus module to be added.
-    pub async fn add_me_to_connections(&self, ctx: Addr<ConsensusModule>) {
-        for connection in self.connection_map.values() {
+    pub async fn add_me_to_connections(&mut self, ctx: Addr<ConsensusModule>) {
+        for key in self.connection_map.keys() {
+            println!("Sending AddBackend to connection: {}", key);
+            let connection = self.connection_map.get(key).unwrap();
             connection
                 .send(AddBackend {
                     node: ctx.clone(),

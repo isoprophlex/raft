@@ -1,6 +1,7 @@
+use actix::System;
 use raft::{node_config::{Node, NodesConfig}, raft_module::RaftModule};
 use utils_lib::{log, set_running_local};
-use std::env;
+use std::{env, thread};
 
 #[actix_rt::main]
 async fn main() {
@@ -13,12 +14,10 @@ async fn main() {
     }
 
     let node_id = args[1].to_string();
+    let port = args[2].to_string();
+    let ip: String = "127.0.0.1".to_string();
 
-    let port: usize = args[2].parse().expect("Invalid port, must be a number");
-
-    let mut raft_node = RaftModule::new(node_id, "127.0.0.1".to_string(), port);
-
-    // TODO this is for local testing. Delete this
+    // This is for local testing.
     let nodes = NodesConfig {
         nodes: vec![
             Node {
@@ -44,5 +43,33 @@ async fn main() {
         ],
     };
 
-    raft_node.start(nodes, None).await;
+    thread::spawn( move || {
+        println!("Inside thread spawn");
+        System::new().block_on(async {
+            println!("Inside block on");
+            new_raft_instance(node_id, nodes, ip, &port).await;
+        });
+    });
+    println!("End of Main!");
+}
+
+async fn new_raft_instance(node_id: String, nodes: NodesConfig, ip: String, original_port: &str) {
+
+    let mut port: usize = original_port.parse().expect("Received an invalid port number");
+    port += 2000;
+
+    println!("Starting Raft module");
+    // Directly create the RaftModule instance without creating a new runtime
+    let mut raft_module = RaftModule::new(node_id.clone(), ip.to_string(), port.clone());
+
+    // Await the start of the Raft module
+    raft_module
+        .start(nodes, Some(format!("../../../sharding/init_history/init_{}", node_id)))
+        .await;
+
+    println!("Raft module started");
+
+    let ctx = raft_module.address.expect("Raft module address is None");
+    RaftModule::listen_for_connections(port, ip.to_string(), node_id, ctx);
+    println!("Ending New Raft");
 }
