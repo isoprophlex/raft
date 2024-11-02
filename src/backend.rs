@@ -1,18 +1,22 @@
 use crate::backend::State::{Candidate, Follower};
 use crate::health_connection::HealthConnection;
-use crate::messages::{Ack, AddBackend, AddNode, AskIfLeader, ConnectionDown, Coordinator, Heartbeat, NewConnection, NewLeader, No, Reconnection, RequestAnswer, RequestedOurVote, StartElection, UpdateID, Vote, HB, ID};
+use crate::messages::{
+    Ack, AddBackend, AddNode, AskIfLeader, ConnectionDown, Coordinator, Heartbeat, NewConnection,
+    NewLeader, No, Reconnection, RequestAnswer, RequestedOurVote, StartElection, UpdateID, Vote,
+    HB, ID,
+};
 use crate::node_config::NodesConfig;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
-use utils_lib::*;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::sync::mpsc::Sender;
 use std::time::Duration;
+use std::time::SystemTime;
 use tokio::net::TcpStream;
 use tokio::time::Instant;
-use std::fs::File;
-use std::io::{Write, Read};
-use std::sync::mpsc::Sender;
-use chrono::{DateTime, Utc};
-use std::time::SystemTime;
+use utils_lib::*;
 
 /// Raft RPCs
 #[derive(Clone)]
@@ -48,7 +52,7 @@ pub struct ConsensusModule {
     myself: Option<Addr<ConsensusModule>>,
     pub heartbeat_handle: Option<SpawnHandle>,
     pub heartbeat_check_handle: Option<SpawnHandle>,
-    pub sender: Sender<bool>
+    pub sender: Sender<bool>,
 }
 
 impl Actor for ConsensusModule {
@@ -101,7 +105,8 @@ impl ConsensusModule {
         let formatted_time = datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
         let string = format!(" *** RUNNING DATE-TIME: {} ***\n", formatted_time);
-        file.write_all(string.as_bytes()).expect("Failed to write timestamp");
+        file.write_all(string.as_bytes())
+            .expect("Failed to write timestamp");
     }
 
     /// Starts connections between nodes based on `node_id` and `total_nodes`.
@@ -114,7 +119,14 @@ impl ConsensusModule {
     ///
     /// # Returns
     /// A new consensus module with the connection map initialized.
-    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>, sender:Sender<bool>) -> Self {
+    pub async fn start_connections(
+        self_ip: String,
+        self_port: usize,
+        self_id: String,
+        nodes_config: NodesConfig,
+        timestamp_dir: Option<&str>,
+        sender: Sender<bool>,
+    ) -> Self {
         let mut connection_map = HashMap::new();
         let self_port = self_port + 3000;
         let config_file_path = match timestamp_dir {
@@ -126,7 +138,12 @@ impl ConsensusModule {
         let first_run = Self::is_first_time_running(config_file_path.as_str());
 
         for node in nodes_config.nodes {
-            log_green!("\n>>> Node name: {:?}, ip: {}, port: {}", node.name, node.ip, node.port);
+            log_green!(
+                "\n>>> Node name: {:?}, ip: {}, port: {}",
+                node.name,
+                node.ip,
+                node.port
+            );
 
             let node_ip = node.ip;
             let node_port = match node.port.parse::<usize>() {
@@ -162,7 +179,7 @@ impl ConsensusModule {
                 ip: self_ip.clone(),
                 port: self_port,
                 id: self_id.clone(),
-                just_arrived: true
+                just_arrived: true,
             }) {
                 log!("Error sending ID to node {}: {}", node_id, e);
                 continue;
@@ -184,7 +201,7 @@ impl ConsensusModule {
             leader_id: None,
             heartbeat_handle: None,
             heartbeat_check_handle: None,
-            sender
+            sender,
         }
     }
 
@@ -264,9 +281,7 @@ impl ConsensusModule {
     pub async fn add_me_to_connections(&self, ctx: Addr<ConsensusModule>) {
         for connection in self.connection_map.values() {
             connection
-                .send(AddBackend {
-                    node: ctx.clone(),
-                })
+                .send(AddBackend { node: ctx.clone() })
                 .await
                 .expect("Error sending backend to connections");
         }
@@ -297,7 +312,6 @@ impl ConsensusModule {
         }
     }
 
-
     /// Marks the node as the leader and begins sending heartbeat messages to other nodes.
     ///
     /// # Arguments
@@ -308,7 +322,9 @@ impl ConsensusModule {
         self.sender.send(true).expect("Error sending True to Node");
 
         log_blue!(
-            "[NODE {}] I'm the new leader, term: {}", self.node_id, self.current_term
+            "[NODE {}] I'm the new leader, term: {}",
+            self.node_id,
+            self.current_term
         );
         self.announce_leader(ctx);
         if let Some(handle) = self.heartbeat_handle.take() {
@@ -323,13 +339,13 @@ impl ConsensusModule {
 
             for (id, connection) in &mut actor.connection_map {
                 log_red!("[❤️] Sending Heartbeat to connection {}", id);
-                match connection.try_send(Heartbeat { term: current_term, id: node_id.clone() }) {
+                match connection.try_send(Heartbeat {
+                    term: current_term,
+                    id: node_id.clone(),
+                }) {
                     Ok(_) => {}
                     Err(e) => {
-                        log!(
-                            "[❤️] Error sending Heartbeat to connection {}: {}",
-                            id, e
-                        );
+                        log!("[❤️] Error sending Heartbeat to connection {}: {}", id, e);
                         ids_to_delete.push(id.clone());
                     }
                 }
@@ -355,7 +371,6 @@ impl ConsensusModule {
 
         self.heartbeat_handle = Some(handle);
     }
-
 
     /// Marks the node as the leader and begins sending heartbeat messages to other nodes.
     ///
@@ -391,7 +406,8 @@ impl ConsensusModule {
 
             if actor.state == State::Leader {
                 log_blue!(
-                    "[NODE {}] I'm the new leader.\n Stopping heartbeat check.", node_id
+                    "[NODE {}] I'm the new leader.\n Stopping heartbeat check.",
+                    node_id
                 );
                 if let Some(check_handle) = actor.heartbeat_check_handle.take() {
                     _ctx.cancel_future(check_handle);
@@ -409,7 +425,6 @@ impl ConsensusModule {
 
         self.heartbeat_check_handle = Some(handle);
     }
-
 }
 
 impl Handler<AddNode> for ConsensusModule {
@@ -469,7 +484,6 @@ impl Handler<RequestedOurVote> for ConsensusModule {
             }
         }
     }
-
 }
 impl Handler<Vote> for ConsensusModule {
     type Result = ();
@@ -498,7 +512,9 @@ impl Handler<NewLeader> for ConsensusModule {
         if self.current_term < msg.term {
             self.current_term = msg.term;
         }
-        self.sender.send(false).expect("Error sending False to Node");
+        self.sender
+            .send(false)
+            .expect("Error sending False to Node");
         log_blue!("New leader is {}", msg.id);
         self.start_heartbeat_check(_ctx);
     }
@@ -541,7 +557,6 @@ impl Handler<HB> for ConsensusModule {
             self.run_election_timer();
         }
     }
-
 }
 
 impl Handler<No> for ConsensusModule {
@@ -560,13 +575,15 @@ impl Handler<NewConnection> for ConsensusModule {
     type Result = ();
 
     fn handle(&mut self, msg: NewConnection, _ctx: &mut Self::Context) -> Self::Result {
-
         let actor_addr = HealthConnection::create_actor(msg.stream, msg.id_connection.clone());
-        self.connection_map.insert(msg.id_connection, actor_addr.clone());
+        self.connection_map
+            .insert(msg.id_connection, actor_addr.clone());
 
         if let Some(myself_addr) = &self.myself {
             actor_addr
-                .try_send(AddBackend { node: myself_addr.clone() })
+                .try_send(AddBackend {
+                    node: myself_addr.clone(),
+                })
                 .expect("Error sending AddBackend to accepted connection");
         }
     }
@@ -600,7 +617,10 @@ impl Handler<Reconnection> for ConsensusModule {
                     let actor_addr = HealthConnection::create_actor(stream, msg.node_id.clone());
 
                     if let Err(e) = ctx_clone
-                        .send(AddNode { id: msg.node_id.clone(), node: actor_addr.clone() })
+                        .send(AddNode {
+                            id: msg.node_id.clone(),
+                            node: actor_addr.clone(),
+                        })
                         .await
                     {
                         log!("Error sending AddNode: {}", e);
@@ -622,7 +642,10 @@ impl Handler<Reconnection> for ConsensusModule {
                     }
 
                     if let Some(leader_id) = leader_id {
-                        if let Err(e) = actor_addr.try_send(NewLeader { id: leader_id, term: cur_term }) {
+                        if let Err(e) = actor_addr.try_send(NewLeader {
+                            id: leader_id,
+                            term: cur_term,
+                        }) {
                             log!("Failed to send NewLeader: {}", e);
                         }
                     }
@@ -633,7 +656,6 @@ impl Handler<Reconnection> for ConsensusModule {
             }
         });
     }
-
 }
 
 impl Handler<UpdateID> for ConsensusModule {
@@ -664,9 +686,10 @@ impl ConsensusModule {
     }
 
     fn update_id(&mut self, msg: &UpdateID) {
-        if let Some(connection) = self.connection_map.remove(&msg.old_id) { // si estaba 127.0.0.1:65117, lo borro
+        if let Some(connection) = self.connection_map.remove(&msg.old_id) {
+            // si estaba 127.0.0.1:65117, lo borro
             self.connection_map.insert(msg.new_id.clone(), connection); // node2
-            return
+            return;
         }
     }
 

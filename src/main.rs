@@ -1,9 +1,12 @@
-use raft::{node_config::{Node, NodesConfig}, raft_module::RaftModule};
-use utils_lib::{log, set_running_local};
-use std::{env, thread};
-use std::sync::mpsc::{Sender, Receiver};
+use raft::{
+    node_config::{Node, NodesConfig},
+    raft_module::RaftModule,
+};
 use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::{env, thread};
 use tokio::task;
+use utils_lib::{log, set_running_local};
 
 #[actix_rt::main]
 async fn main() {
@@ -20,7 +23,7 @@ async fn main() {
     let port: usize = args[2].parse().expect("Invalid port, must be a number");
 
     let mut raft_node = RaftModule::new(node_id, "127.0.0.1".to_string(), port);
-    let (tx, _rx) : (Sender<bool>, Receiver<bool>) = mpsc::channel();
+    let (tx, _rx): (Sender<bool>, Receiver<bool>) = mpsc::channel();
     // TODO this is for local testing. Delete this
     let nodes = NodesConfig {
         nodes: vec![
@@ -46,19 +49,16 @@ async fn main() {
             },
         ],
     };
-    thread::spawn(move || {
-        loop {
-            match _rx.recv() {
-                Ok(message) => {
-                    println!("Received message: {:?}", message);
-                }
-                Err(_) => {
-                    println!("Receiver channel closed.");
-                    break;
-                }
+    thread::spawn(move || loop {
+        match _rx.recv() {
+            Ok(message) => {
+                println!("Received message: {:?}", message);
+            }
+            Err(_) => {
+                println!("Receiver channel closed.");
+                break;
             }
         }
     });
     raft_node.start(nodes, None, tx).await;
-
 }

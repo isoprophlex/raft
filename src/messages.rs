@@ -111,7 +111,7 @@ pub struct UpdateID {
     pub port: usize,
     pub old_id: String,
     pub new_id: String,
-    pub expects_leader: bool
+    pub expects_leader: bool,
 }
 
 #[derive(Message)]

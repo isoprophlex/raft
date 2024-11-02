@@ -2,7 +2,10 @@ use actix::prelude::*;
 use utils_lib::log;
 
 use crate::backend::ConsensusModule;
-use crate::messages::{AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, RequestAnswer, RequestedOurVote, StartElection, Vote, Ack, HB, Reconnection, ID, UpdateID};
+use crate::messages::{
+    Ack, AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, Reconnection,
+    RequestAnswer, RequestedOurVote, StartElection, UpdateID, Vote, HB, ID,
+};
 use actix::fut::wrap_future;
 use actix::{Actor, Addr, Context, Handler, StreamHandler};
 use std::collections::HashMap;
@@ -49,12 +52,10 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         words.next().and_then(|w| w.parse::<u16>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            let _ = backend_addr
-                                .clone()
-                                .try_send(RequestedOurVote {
-                                    candidate_id: candidate_node,
-                                    term: term as usize,
-                                });
+                            let _ = backend_addr.clone().try_send(RequestedOurVote {
+                                candidate_id: candidate_node,
+                                term: term as usize,
+                            });
                         } else {
                             log!("Backend actor is not available");
                         }
@@ -63,12 +64,10 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                 Some("VOTE") => {
                     if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            let _ = backend_addr
-                                .clone()
-                                .try_send(Vote {
-                                    id: self.id_connection.clone().unwrap_or_default(),
-                                    term: term.into(),
-                                });
+                            let _ = backend_addr.clone().try_send(Vote {
+                                id: self.id_connection.clone().unwrap_or_default(),
+                                term: term.into(),
+                            });
                         } else {
                             log!("Backend actor is not available");
                         }
@@ -77,7 +76,10 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                 Some("HB") => {
                     if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            let _ = backend_addr.clone().try_send(HB { term, id: self.id_connection.clone().unwrap_or_default() });
+                            let _ = backend_addr.clone().try_send(HB {
+                                term,
+                                id: self.id_connection.clone().unwrap_or_default(),
+                            });
                         }
                     }
                 }
@@ -116,12 +118,10 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         words.next().and_then(|w| w.parse::<u16>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            let _ = backend_addr
-                                .clone()
-                                .try_send(NewLeader {
-                                    id: leader_node,
-                                    term: term as usize,
-                                });
+                            let _ = backend_addr.clone().try_send(NewLeader {
+                                id: leader_node,
+                                term: term as usize,
+                            });
                         } else {
                             log!("Backend actor is not available");
                         }
@@ -134,13 +134,11 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         words.next().and_then(|w| w.parse::<usize>().ok()),
                     ) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            let _ = backend_addr
-                                .clone()
-                                .try_send(Reconnection {
-                                    node_id: id,
-                                    ip,
-                                    port,
-                                });
+                            let _ = backend_addr.clone().try_send(Reconnection {
+                                node_id: id,
+                                ip,
+                                port,
+                            });
                         } else {
                             log!("Backend actor is not available");
                         }
@@ -204,16 +202,14 @@ impl HealthConnection {
                 }
             }
         })
-            .map(move |result, this, _ctx| match result {
-                Ok(write) => {
-                    this.write = Some(write);
-                }
-                Err(_) => {
-                }
-            })
-            .wait(ctx);
+        .map(move |result, this, _ctx| match result {
+            Ok(write) => {
+                this.write = Some(write);
+            }
+            Err(_) => {}
+        })
+        .wait(ctx);
     }
-
 }
 
 impl Handler<StartElection> for HealthConnection {
@@ -285,7 +281,10 @@ impl Handler<ID> for HealthConnection {
     type Result = ();
 
     fn handle(&mut self, msg: ID, _ctx: &mut Self::Context) -> Self::Result {
-        self.make_response(format!("ID {} {} {} {}", msg.id, msg.ip, msg.port, msg.just_arrived), _ctx);
+        self.make_response(
+            format!("ID {} {} {} {}", msg.id, msg.ip, msg.port, msg.just_arrived),
+            _ctx,
+        );
     }
 }
 

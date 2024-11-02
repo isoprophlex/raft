@@ -1,5 +1,5 @@
-pub mod raft_module;
-pub mod node_config;
+mod backend;
 mod health_connection;
 mod messages;
-mod backend;
+pub mod node_config;
+pub mod raft_module;
