@@ -1,8 +1,9 @@
 use raft::{node_config::{Node, NodesConfig}, raft_module::RaftModule};
 use utils_lib::{log, set_running_local};
-use std::env;
+use std::{env, thread};
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
+use tokio::task;
 
 #[actix_rt::main]
 async fn main() {
@@ -45,6 +46,19 @@ async fn main() {
             },
         ],
     };
-
+    thread::spawn(move || {
+        loop {
+            match _rx.recv() {
+                Ok(message) => {
+                    println!("Received message: {:?}", message);
+                }
+                Err(_) => {
+                    println!("Receiver channel closed.");
+                    break;
+                }
+            }
+        }
+    });
     raft_node.start(nodes, None, tx).await;
+
 }

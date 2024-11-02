@@ -13,6 +13,7 @@ use std::io::{Write, Read};
 use std::sync::mpsc::Sender;
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
+use tokio::sync::TryAcquireError;
 use crate::raft_module::RaftModule;
 
 /// Raft RPCs
@@ -304,7 +305,7 @@ impl ConsensusModule {
     pub fn become_leader(&mut self, ctx: &mut Context<Self>) {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
-        
+        self.sender.send(true).expect("Error sending True to Receiver");
         log_blue!(
             "[NODE {}] I'm the new leader, term: {}", self.node_id, self.current_term
         );
@@ -396,6 +397,7 @@ impl ConsensusModule {
                     _ctx.cancel_future(check_handle);
                 }
                 actor.heartbeat_check_handle = None;
+                actor.sender.send(true).expect("Error informing leadership");
                 return;
             }
 
@@ -497,6 +499,7 @@ impl Handler<NewLeader> for ConsensusModule {
             self.current_term = msg.term;
         }
         log_blue!("New leader is {}", msg.id);
+        self.sender.send(false).expect("Error sending False to Rx");
         self.start_heartbeat_check(_ctx);
     }
 }
