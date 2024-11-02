@@ -92,6 +92,7 @@ impl ConsensusModule {
     /// # Arguments
     /// * `file_path` - The path to the file where the timestamp will be written.
     fn update_timestamp(file_path: &str) {
+        println!("Updating timestamp in file_path: {}", file_path);
         let mut file = File::create(file_path).expect("Failed to create initialization file");
 
         // Convert SystemTime to DateTime<Utc> directly
@@ -113,7 +114,7 @@ impl ConsensusModule {
     ///
     /// # Returns
     /// A new consensus module with the connection map initialized.
-    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>, sender: Sender<bool>) -> Self {
+    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>, sender:Sender<bool>) -> Self {
         let mut connection_map = HashMap::new();
         let self_port = self_port + 3000;
         let config_file_path = match timestamp_dir {
@@ -304,12 +305,12 @@ impl ConsensusModule {
     pub fn become_leader(&mut self, ctx: &mut Context<Self>) {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
-        self.sender.send(true).expect("Error sending True to Receiver");
+        self.sender.send(true).expect("Error sending True to Node");
+
         log_blue!(
             "[NODE {}] I'm the new leader, term: {}", self.node_id, self.current_term
         );
         self.announce_leader(ctx);
-
         if let Some(handle) = self.heartbeat_handle.take() {
             ctx.cancel_future(handle);
         }
@@ -396,6 +397,7 @@ impl ConsensusModule {
                     _ctx.cancel_future(check_handle);
                 }
                 actor.heartbeat_check_handle = None;
+                actor.sender.send(true).expect("Error sending True to Node");
                 return;
             }
 
@@ -496,6 +498,7 @@ impl Handler<NewLeader> for ConsensusModule {
         if self.current_term < msg.term {
             self.current_term = msg.term;
         }
+        self.sender.send(false).expect("Error sending False to Node");
         log_blue!("New leader is {}", msg.id);
         self.start_heartbeat_check(_ctx);
     }
@@ -515,8 +518,10 @@ impl Handler<HB> for ConsensusModule {
         let leader_id = match &self.leader_id {
             Some(id) => id,
             None => {
-                log_red!("[❤️] I don't have a leader, ignoring heartbeat");
-                return;
+                log_red!("[❤️] I don't have a leader, setting leader");
+                self.leader_id = Some(msg.id.clone());
+                log_blue!("New leader is {}", msg.id);
+                &self.leader_id.clone().unwrap()
             }
         };
 
@@ -634,11 +639,11 @@ impl Handler<Reconnection> for ConsensusModule {
 impl Handler<UpdateID> for ConsensusModule {
     type Result = ();
 
-    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {    
+    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {
         if self.id_is_connected(&msg.old_id) {
             self.update_id(&msg);
         }
-        
+
         if msg.expects_leader {
             self.try_send_new_leader(msg.new_id.clone());
         }
