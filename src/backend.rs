@@ -10,6 +10,7 @@ use tokio::net::TcpStream;
 use tokio::time::Instant;
 use std::fs::File;
 use std::io::{Write, Read};
+use std::sync::mpsc::Sender;
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
 use crate::raft_module::RaftModule;
@@ -48,6 +49,7 @@ pub struct ConsensusModule {
     myself: Option<Addr<ConsensusModule>>,
     pub heartbeat_handle: Option<SpawnHandle>,
     pub heartbeat_check_handle: Option<SpawnHandle>,
+    pub sender: Sender<bool>
 }
 
 impl Actor for ConsensusModule {
@@ -111,7 +113,7 @@ impl ConsensusModule {
     ///
     /// # Returns
     /// A new consensus module with the connection map initialized.
-    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>) -> Self {
+    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>, sender: Sender<bool>) -> Self {
         let mut connection_map = HashMap::new();
         let self_port = self_port + 3000;
         let config_file_path = match timestamp_dir {
@@ -181,6 +183,7 @@ impl ConsensusModule {
             leader_id: None,
             heartbeat_handle: None,
             heartbeat_check_handle: None,
+            sender
         }
     }
 
