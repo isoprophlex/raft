@@ -10,8 +10,10 @@ use tokio::net::TcpStream;
 use tokio::time::Instant;
 use std::fs::File;
 use std::io::{Write, Read};
+use std::sync::mpsc::Sender;
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
+use tokio::sync::TryAcquireError;
 use crate::raft_module::RaftModule;
 
 /// Raft RPCs
@@ -48,6 +50,7 @@ pub struct ConsensusModule {
     myself: Option<Addr<ConsensusModule>>,
     pub heartbeat_handle: Option<SpawnHandle>,
     pub heartbeat_check_handle: Option<SpawnHandle>,
+    pub sender: Sender<bool>
 }
 
 impl Actor for ConsensusModule {
@@ -111,7 +114,7 @@ impl ConsensusModule {
     ///
     /// # Returns
     /// A new consensus module with the connection map initialized.
-    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>) -> Self {
+    pub async fn start_connections(self_ip: String, self_port: usize, self_id: String, nodes_config: NodesConfig, timestamp_dir: Option<&str>, sender: Sender<bool>) -> Self {
         let mut connection_map = HashMap::new();
         let self_port = self_port + 3000;
         let config_file_path = match timestamp_dir {
@@ -181,6 +184,7 @@ impl ConsensusModule {
             leader_id: None,
             heartbeat_handle: None,
             heartbeat_check_handle: None,
+            sender
         }
     }
 
@@ -301,7 +305,7 @@ impl ConsensusModule {
     pub fn become_leader(&mut self, ctx: &mut Context<Self>) {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
-        
+        self.sender.send(true).expect("Error sending True to Receiver");
         log_blue!(
             "[NODE {}] I'm the new leader, term: {}", self.node_id, self.current_term
         );
@@ -393,6 +397,7 @@ impl ConsensusModule {
                     _ctx.cancel_future(check_handle);
                 }
                 actor.heartbeat_check_handle = None;
+                actor.sender.send(true).expect("Error informing leadership");
                 return;
             }
 
@@ -494,6 +499,7 @@ impl Handler<NewLeader> for ConsensusModule {
             self.current_term = msg.term;
         }
         log_blue!("New leader is {}", msg.id);
+        self.sender.send(false).expect("Error sending False to Rx");
         self.start_heartbeat_check(_ctx);
     }
 }
@@ -631,11 +637,11 @@ impl Handler<Reconnection> for ConsensusModule {
 impl Handler<UpdateID> for ConsensusModule {
     type Result = ();
 
-    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {    
+    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {
         if self.id_is_connected(&msg.old_id) {
             self.update_id(&msg);
         }
-        
+
         if msg.expects_leader {
             self.try_send_new_leader(msg.new_id.clone());
         }
