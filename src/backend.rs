@@ -13,8 +13,6 @@ use std::io::{Write, Read};
 use std::sync::mpsc::Sender;
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
-use tokio::sync::TryAcquireError;
-use crate::raft_module::RaftModule;
 
 /// Raft RPCs
 #[derive(Clone)]
@@ -68,6 +66,7 @@ impl ConsensusModule {
     fn is_first_time_running(file_path: &str) -> bool {
         let mut first_run = false;
         // Node was previously initialized, not the first run
+        println!("File_path: {}", file_path);
         if let Ok(mut file) = File::open(file_path) {
             let mut timestamp = String::new();
             match file.read_to_string(&mut timestamp) {
@@ -323,7 +322,7 @@ impl ConsensusModule {
 
             for (id, connection) in &mut actor.connection_map {
                 log_red!("[❤️] Sending Heartbeat to connection {}", id);
-                match connection.try_send(Heartbeat { term: current_term }) {
+                match connection.try_send(Heartbeat { term: current_term, id: node_id.clone() }) {
                     Ok(_) => {}
                     Err(e) => {
                         log!(
@@ -397,7 +396,6 @@ impl ConsensusModule {
                     _ctx.cancel_future(check_handle);
                 }
                 actor.heartbeat_check_handle = None;
-                actor.sender.send(true).expect("Error informing leadership");
                 return;
             }
 
@@ -499,7 +497,6 @@ impl Handler<NewLeader> for ConsensusModule {
             self.current_term = msg.term;
         }
         log_blue!("New leader is {}", msg.id);
-        self.sender.send(false).expect("Error sending False to Rx");
         self.start_heartbeat_check(_ctx);
     }
 }
@@ -637,11 +634,11 @@ impl Handler<Reconnection> for ConsensusModule {
 impl Handler<UpdateID> for ConsensusModule {
     type Result = ();
 
-    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: UpdateID, _ctx: &mut Self::Context) -> Self::Result {    
         if self.id_is_connected(&msg.old_id) {
             self.update_id(&msg);
         }
-
+        
         if msg.expects_leader {
             self.try_send_new_leader(msg.new_id.clone());
         }

@@ -60,5 +60,4 @@ async fn main() {
         }
     });
     raft_node.start(nodes, None, tx).await;
-
 }
