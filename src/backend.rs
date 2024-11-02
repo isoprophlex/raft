@@ -13,8 +13,6 @@ use std::io::{Write, Read};
 use std::sync::mpsc::Sender;
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
-use tokio::sync::TryAcquireError;
-use crate::raft_module::RaftModule;
 
 /// Raft RPCs
 #[derive(Clone)]
@@ -68,6 +66,7 @@ impl ConsensusModule {
     fn is_first_time_running(file_path: &str) -> bool {
         let mut first_run = false;
         // Node was previously initialized, not the first run
+        println!("File_path: {}", file_path);
         if let Ok(mut file) = File::open(file_path) {
             let mut timestamp = String::new();
             match file.read_to_string(&mut timestamp) {
@@ -93,6 +92,7 @@ impl ConsensusModule {
     /// # Arguments
     /// * `file_path` - The path to the file where the timestamp will be written.
     fn update_timestamp(file_path: &str) {
+        println!("Updating timestamp in file_path: {}", file_path);
         let mut file = File::create(file_path).expect("Failed to create initialization file");
 
         // Convert SystemTime to DateTime<Utc> directly
@@ -323,7 +323,7 @@ impl ConsensusModule {
 
             for (id, connection) in &mut actor.connection_map {
                 log_red!("[❤️] Sending Heartbeat to connection {}", id);
-                match connection.try_send(Heartbeat { term: current_term }) {
+                match connection.try_send(Heartbeat { term: current_term, id: node_id.clone() }) {
                     Ok(_) => {}
                     Err(e) => {
                         log!(
@@ -518,8 +518,10 @@ impl Handler<HB> for ConsensusModule {
         let leader_id = match &self.leader_id {
             Some(id) => id,
             None => {
-                log_red!("[❤️] I don't have a leader, ignoring heartbeat");
-                return;
+                log_red!("[❤️] I don't have a leader, setting leader");
+                self.leader_id = Some(msg.id.clone());
+                log_blue!("New leader is {}", msg.id);
+                &self.leader_id.clone().unwrap()
             }
         };
 

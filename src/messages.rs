@@ -52,6 +52,7 @@ pub struct StartElection {
 #[rtype(result = "()")]
 pub struct Heartbeat {
     pub term: usize,
+    pub id: String,
 }
 
 #[derive(Message)]
@@ -75,6 +76,7 @@ pub struct No {
 #[rtype(result = "()")]
 pub struct HB {
     pub term: u16,
+    pub id: String,
 }
 #[derive(Message)]
 #[rtype(result = "()")]

@@ -12,7 +12,6 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_stream::wrappers::LinesStream;
-use crate::raft_module::RaftModule;
 
 /// Actor who manages Health connections and communication between nodes.
 ///
@@ -78,7 +77,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                 Some("HB") => {
                     if let Some(term) = words.next().and_then(|w| w.parse::<u16>().ok()) {
                         if let Some(backend_addr) = &self.backend_actor {
-                            let _ = backend_addr.clone().try_send(HB { term });
+                            let _ = backend_addr.clone().try_send(HB { term, id: self.id_connection.clone().unwrap_or_default() });
                         }
                     }
                 }
@@ -263,7 +262,7 @@ impl Handler<Heartbeat> for HealthConnection {
     type Result = ();
 
     fn handle(&mut self, msg: Heartbeat, ctx: &mut Self::Context) -> Self::Result {
-        self.make_response(format!("HB {}", msg.term), ctx);
+        self.make_response(format!("HB {} {}", msg.term, msg.id), ctx);
     }
 }
 
