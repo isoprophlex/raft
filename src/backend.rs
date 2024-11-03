@@ -70,7 +70,6 @@ impl ConsensusModule {
     fn is_first_time_running(file_path: &str) -> bool {
         let mut first_run = false;
         // Node was previously initialized, not the first run
-        println!("File_path: {}", file_path);
         if let Ok(mut file) = File::open(file_path) {
             let mut timestamp = String::new();
             match file.read_to_string(&mut timestamp) {
@@ -96,7 +95,6 @@ impl ConsensusModule {
     /// # Arguments
     /// * `file_path` - The path to the file where the timestamp will be written.
     fn update_timestamp(file_path: &str) {
-        println!("Updating timestamp in file_path: {}", file_path);
         let mut file = File::create(file_path).expect("Failed to create initialization file");
 
         // Convert SystemTime to DateTime<Utc> directly
