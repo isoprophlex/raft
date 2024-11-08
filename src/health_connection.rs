@@ -3,8 +3,7 @@ use utils_lib::log;
 
 use crate::backend::ConsensusModule;
 use crate::messages::{
-    Ack, AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, Reconnection,
-    RequestAnswer, RequestedOurVote, StartElection, UpdateID, Vote, HB, ID,
+    Ack, AddBackend, ConnectionDown, Coordinator, Heartbeat, NewLeader, No, Reconnection, RequestAnswer, RequestedOurVote, RoleChanged, StartElection, UpdateID, Vote, HB, ID
 };
 use actix::fut::wrap_future;
 use actix::{Actor, Addr, Context, Handler, StreamHandler};
@@ -25,7 +24,7 @@ pub struct HealthConnection {
     id_connection: Option<String>,
     other_actors: HashMap<String, Addr<HealthConnection>>,
     backend_actor: Option<Addr<ConsensusModule>>,
-    current_term: usize,
+    current_term: usize
 }
 
 impl Actor for HealthConnection {
@@ -155,6 +154,17 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                         }
                     }
                 }
+                Some("R") => {
+                    if let Some(node_id) = words.next().and_then(|w| w.parse::<String>().ok()) {
+                        if let Some(backend_addr) = &self.backend_actor {
+                            let _ = backend_addr.clone().try_send(RoleChanged {
+                                id: node_id,
+                            });
+                        } else {
+                            log!("Backend actor is not available");
+                        }
+                    }
+                }
                 _ => {}
             }
         } else {
@@ -172,7 +182,7 @@ impl HealthConnection {
     ///
     /// # Returns
     /// Un `Addr<HealthConnection>` que representa el actor creado.
-    pub fn create_actor(stream: TcpStream, id_connection: String) -> Addr<HealthConnection> {
+    pub fn create_actor(stream: TcpStream, id_connection: String,) -> Addr<HealthConnection> {
         HealthConnection::create(|ctx| {
             let (read_half, write_half) = split(stream);
             HealthConnection::add_stream(LinesStream::new(BufReader::new(read_half).lines()), ctx);
@@ -293,6 +303,14 @@ impl Handler<NewLeader> for HealthConnection {
 
     fn handle(&mut self, msg: NewLeader, _ctx: &mut Self::Context) -> Self::Result {
         self.make_response(format!("NL {} {}", msg.id, msg.term), _ctx);
+    }
+}
+
+impl Handler<RoleChanged> for HealthConnection {
+    type Result = ();
+
+    fn handle(&mut self, _msg: RoleChanged, _ctx: &mut Self::Context) -> Self::Result {
+        self.make_response(format!("R {}", _msg.id), _ctx);
     }
 }
 unsafe impl Send for HealthConnection {}
