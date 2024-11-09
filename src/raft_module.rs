@@ -31,6 +31,7 @@ impl RaftModule {
     /// Starts the RaftModule. This function will start the connections with the other nodes and listen for incoming connections.
     /// It will also start the election timer if the node is the second to go live.
     /// Elections need at least 2 nodes to start.
+    /// wait_for_acks will be false only in local testing instances
     pub async fn start(
         &mut self,
         nodes_config: NodesConfig,

@@ -369,12 +369,16 @@ impl ConsensusModule {
                 ctx.stop();
             }
         });
-
         self.heartbeat_handle = Some(handle);
     }
 
+    // This is a helper function for when the node is the leader.
+    // The leader annouced itself and now it's waiting for the acks from the other nodes.
+    // When all the acks are received, the leader will update the transmission.
+    // This avoids the leader updating itself before all the other nodes are aware that they might have a new leader.
     fn increment_ack(&mut self) {
         self.acks_received += 1;
+        log!("Acks received: {}, connections: {}", self.acks_received, self.connection_map.len());
         if self.acks_received >= self.connection_map.len() {
             self.update_transmission();
         }
@@ -420,6 +424,7 @@ impl ConsensusModule {
                 if let Some(check_handle) = actor.heartbeat_check_handle.take() {
                     _ctx.cancel_future(check_handle);
                 }
+                _ = actor.update_transmission();
                 actor.heartbeat_check_handle = None;
                 return;
             }
@@ -434,11 +439,17 @@ impl ConsensusModule {
     }
 
     pub fn update_transmission(&self) -> bool {
+        log!("Updating transmission");
         let i_am_leader = self.state == State::Leader;
         self.transmitter
             .send(i_am_leader)
             .expect(format!("Error sending {} to External Receiver", i_am_leader).as_str());
-        return if i_am_leader { self.try_wait_for_external_ack() } else { true };
+        // Shards wait for external role change before continuing, so race conditions are avoided.
+        return {
+            let result = self.try_wait_for_external_ack();
+            log!("External ACK received");
+            result
+        };
     }
 
     fn try_wait_for_external_ack(&self) -> bool {
@@ -448,6 +459,7 @@ impl ConsensusModule {
        
         // Listen for the ack. This means the role of the node has been updated outside of raft.
         loop {
+            log!("Waiting for external ACK");
             return self.receiver.recv().is_ok();
         }
     }
@@ -552,6 +564,7 @@ impl Handler<NewLeader> for ConsensusModule {
         if self.leader_id != Some(self.node_id.clone()) {
             self.state = Follower;
         }
+        // If the transmission to the external source is successful, the node sends an ACK to the leader to confirm the role change.
         if self.update_transmission() {
             self.send_role_ack_to_leader();
         }
