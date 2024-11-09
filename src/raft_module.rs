@@ -97,7 +97,7 @@ impl RaftModule {
             .await
             .expect("Failed to bind listener");
 
-        log!("Node {} is listening on {}:{}", ip, node_id, port);
+        log!("Node {} is listening on {}:{}", node_id, ip, port);
 
         loop {
             match listener.accept().await {
