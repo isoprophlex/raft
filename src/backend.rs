@@ -2,6 +2,7 @@ use crate::backend::State::{Candidate, Follower};
 use crate::health_connection::HealthConnection;
 use crate::messages::*;
 use crate::node_config::NodesConfig;
+use crate::raft_module::PORT_OFFSET;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -126,7 +127,7 @@ impl ConsensusModule {
         wait_for_acks: bool,
     ) -> Self {
         let mut connection_map = HashMap::new();
-        let self_port = self_port + 3000;
+        let self_port = self_port + PORT_OFFSET;
         let config_file_path = match timestamp_dir {
             Some(path) => path.to_string(),
             None => format!("./init_history/init_{}.txt", self_id),
@@ -145,7 +146,7 @@ impl ConsensusModule {
 
             let node_ip = node.ip;
             let node_port = match node.port.parse::<usize>() {
-                Ok(port) => port + 3000,
+                Ok(port) => port + PORT_OFFSET,
                 Err(e) => {
                     log!("Error parsing port for node {}: {}", node.name, e);
                     continue;

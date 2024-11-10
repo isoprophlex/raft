@@ -7,6 +7,7 @@ use tokio::net::TcpListener;
 use utils_lib::*;
 
 const MINIMUM_AMOUNT_FOR_ELECTION: usize = 2;
+pub const PORT_OFFSET: usize = 2000;
 
 /// RaftModule is the main struct that will be used to start the Raft consensus algorithm.
 pub struct RaftModule {
@@ -92,7 +93,7 @@ impl RaftModule {
         port: usize,
         ctx_task: Addr<ConsensusModule>,
     ) {
-        let port = port + 3000;
+        let port = port + PORT_OFFSET;
         let listener = TcpListener::bind(format!("{}:{}", ip, port))
             .await
             .expect("Failed to bind listener");
