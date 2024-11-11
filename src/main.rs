@@ -5,7 +5,6 @@ use raft::{
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::{env, thread};
-use tokio::task;
 use utils_lib::{log, set_running_local};
 
 #[actix_rt::main]
@@ -23,7 +22,9 @@ async fn main() {
     let port: usize = args[2].parse().expect("Invalid port, must be a number");
 
     let mut raft_node = RaftModule::new(node_id, "127.0.0.1".to_string(), port);
-    let (tx, _rx): (Sender<bool>, Receiver<bool>) = mpsc::channel();
+    let (raft_transmitter, external_receiver): (Sender<bool>, Receiver<bool>) = mpsc::channel();
+    let (external_transmitter, raft_receiver): (Sender<bool>, Receiver<bool>) = mpsc::channel();
+    
     // TODO this is for local testing. Delete this
     let nodes = NodesConfig {
         nodes: vec![
@@ -50,15 +51,17 @@ async fn main() {
         ],
     };
     thread::spawn(move || loop {
-        match _rx.recv() {
+        match external_receiver.recv() {
             Ok(message) => {
-                println!("Received message: {:?}", message);
+                log!("[MAIN] raft is leader: {:?}", message);
+                external_transmitter.send(true).expect("Failed to send message");
             }
             Err(_) => {
-                println!("Receiver channel closed.");
+                log!("[MAIN] Receiver channel closed.");
                 break;
             }
         }
     });
-    raft_node.start(nodes, None, tx).await;
+    
+    raft_node.start(nodes, None, raft_transmitter, raft_receiver, false).await;
 }

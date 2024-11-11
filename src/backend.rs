@@ -1,17 +1,14 @@
 use crate::backend::State::{Candidate, Follower};
 use crate::health_connection::HealthConnection;
-use crate::messages::{
-    Ack, AddBackend, AddNode, AskIfLeader, ConnectionDown, Coordinator, Heartbeat, NewConnection,
-    NewLeader, No, Reconnection, RequestAnswer, RequestedOurVote, StartElection, UpdateID, Vote,
-    HB, ID,
-};
+use crate::messages::*;
 use crate::node_config::NodesConfig;
+use crate::raft_module::PORT_OFFSET;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use std::time::SystemTime;
 use tokio::net::TcpStream;
@@ -37,7 +34,6 @@ impl PartialEq for State {
     }
 }
 
-#[derive(Clone)]
 pub struct ConsensusModule {
     pub connection_map: HashMap<String, Addr<HealthConnection>>,
     pub node_id: String,
@@ -52,7 +48,10 @@ pub struct ConsensusModule {
     myself: Option<Addr<ConsensusModule>>,
     pub heartbeat_handle: Option<SpawnHandle>,
     pub heartbeat_check_handle: Option<SpawnHandle>,
-    pub sender: Sender<bool>,
+    pub transmitter: Sender<bool>,
+    pub receiver: Receiver<bool>,
+    pub wait_for_acks: bool,
+    acks_received: usize,
 }
 
 impl Actor for ConsensusModule {
@@ -123,10 +122,12 @@ impl ConsensusModule {
         self_id: String,
         nodes_config: NodesConfig,
         timestamp_dir: Option<&str>,
-        sender: Sender<bool>,
+        transmitter: Sender<bool>,
+        receiver: Receiver<bool>,
+        wait_for_acks: bool,
     ) -> Self {
         let mut connection_map = HashMap::new();
-        let self_port = self_port + 3000;
+        let self_port = self_port + PORT_OFFSET;
         let config_file_path = match timestamp_dir {
             Some(path) => path.to_string(),
             None => format!("./init_history/init_{}.txt", self_id),
@@ -145,7 +146,7 @@ impl ConsensusModule {
 
             let node_ip = node.ip;
             let node_port = match node.port.parse::<usize>() {
-                Ok(port) => port + 3000,
+                Ok(port) => port + PORT_OFFSET,
                 Err(e) => {
                     log!("Error parsing port for node {}: {}", node.name, e);
                     continue;
@@ -184,7 +185,6 @@ impl ConsensusModule {
             }
             connection_map.insert(node_id.clone(), actor_addr);
         }
-
         Self {
             connection_map,
             node_id: self_id,
@@ -199,7 +199,10 @@ impl ConsensusModule {
             leader_id: None,
             heartbeat_handle: None,
             heartbeat_check_handle: None,
-            sender,
+            transmitter,
+            receiver,
+            wait_for_acks,
+            acks_received: 0,
         }
     }
 
@@ -284,6 +287,7 @@ impl ConsensusModule {
                 .expect("Error sending backend to connections");
         }
     }
+    
     /// Checks the votes received and updates the state accordingly.
     ///
     /// # Arguments
@@ -317,14 +321,14 @@ impl ConsensusModule {
     pub fn become_leader(&mut self, ctx: &mut Context<Self>) {
         self.state = State::Leader;
         self.leader_id = Some(self.node_id.clone());
-        self.sender.send(true).expect("Error sending True to Node");
-
         log_blue!(
-            "[NODE {}] I'm the new leader, term: {}",
+            "[NODE {}] Becoming leader, term: {}",
             self.node_id,
             self.current_term
         );
+        self.acks_received = 0;
         self.announce_leader(ctx);
+        
         if let Some(handle) = self.heartbeat_handle.take() {
             ctx.cancel_future(handle);
         }
@@ -366,8 +370,19 @@ impl ConsensusModule {
                 ctx.stop();
             }
         });
-
         self.heartbeat_handle = Some(handle);
+    }
+
+    // This is a helper function for when the node is the leader.
+    // The leader annouced itself and now it's waiting for the acks from the other nodes.
+    // When all the acks are received, the leader will update the transmission.
+    // This avoids the leader updating itself before all the other nodes are aware that they might have a new leader.
+    fn increment_ack(&mut self) {
+        self.acks_received += 1;
+        log!("Acks received: {}, connections: {}", self.acks_received, self.connection_map.len());
+        if self.acks_received >= self.connection_map.len() {
+            self.update_transmission();
+        }
     }
 
     /// Marks the node as the leader and begins sending heartbeat messages to other nodes.
@@ -410,8 +425,8 @@ impl ConsensusModule {
                 if let Some(check_handle) = actor.heartbeat_check_handle.take() {
                     _ctx.cancel_future(check_handle);
                 }
+                _ = actor.update_transmission();
                 actor.heartbeat_check_handle = None;
-                actor.sender.send(true).expect("Error sending True to Node");
                 return;
             }
 
@@ -422,6 +437,44 @@ impl ConsensusModule {
         });
 
         self.heartbeat_check_handle = Some(handle);
+    }
+
+    pub fn update_transmission(&self) -> bool {
+        log!("Updating transmission");
+        let i_am_leader = self.state == State::Leader;
+        self.transmitter
+            .send(i_am_leader)
+            .expect(format!("Error sending {} to External Receiver", i_am_leader).as_str());
+        // Shards wait for external role change before continuing, so race conditions are avoided.
+        return {
+            let result = self.try_wait_for_external_ack();
+            log!("External ACK received");
+            result
+        };
+    }
+
+    fn try_wait_for_external_ack(&self) -> bool {
+        if !self.wait_for_acks {
+            return true;
+        }
+       
+        // Listen for the ack. This means the role of the node has been updated outside of raft.
+        loop {
+            log!("Waiting for external ACK");
+            return self.receiver.recv().is_ok();
+        }
+    }
+
+    fn send_role_ack_to_leader(&self) {
+        if let Some(leader_id) = self.leader_id.clone() {
+            if let Some(leader_actor) = self.connection_map.get(&leader_id) {
+                if let Err(e) = leader_actor.try_send(RoleChanged {
+                    id: self.node_id.clone()
+                }) {
+                    log!("Error sending ACK to leader: {}", e);
+                }
+            }
+        }
     }
 }
 
@@ -438,6 +491,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
     fn handle(&mut self, msg: RequestedOurVote, _ctx: &mut Context<Self>) -> Self::Result {
         let vote_term = msg.term;
 
+        // If the node that requested the vote has a lower term, it means it's outdated. A NewLeader message is sent
         if msg.term < self.current_term {
             if let Some(connection) = self.connection_map.get(&msg.candidate_id) {
                 if let Some(leader_id) = &self.leader_id {
@@ -452,6 +506,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
             return;
         }
 
+        // If this node has not voted yet
         if self.last_vote.is_none() || self.last_vote == Some(0) {
             self.last_vote = Some(msg.term);
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
@@ -462,6 +517,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     log!("Error sending VOTE HIM to connection: {}", e);
                 }
             }
+        // If this node is outdated
         } else if vote_term > self.current_term {
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
                 if let Err(e) = actor.try_send(RequestAnswer {
@@ -471,6 +527,7 @@ impl Handler<RequestedOurVote> for ConsensusModule {
                     log!("Error sending VOTE HIM to connection: {}", e);
                 }
             }
+        // If this node has already voted in this term
         } else if vote_term == self.current_term {
             if let Some(actor) = self.connection_map.get(&msg.candidate_id) {
                 if let Err(e) = actor.try_send(RequestAnswer {
@@ -502,17 +559,19 @@ impl Handler<ConnectionDown> for ConsensusModule {
 impl Handler<NewLeader> for ConsensusModule {
     type Result = ();
 
+    /// The node receives a NewLeader message and updates its state accordingly.
     fn handle(&mut self, msg: NewLeader, _ctx: &mut Self::Context) -> Self::Result {
         self.leader_id = Some(msg.id.clone());
         if self.leader_id != Some(self.node_id.clone()) {
             self.state = Follower;
         }
+        // If the transmission to the external source is successful, the node sends an ACK to the leader to confirm the role change.
+        if self.update_transmission() {
+            self.send_role_ack_to_leader();
+        }
         if self.current_term < msg.term {
             self.current_term = msg.term;
         }
-        self.sender
-            .send(false)
-            .expect("Error sending False to Node");
         log_blue!("New leader is {}", msg.id);
         self.start_heartbeat_check(_ctx);
     }
@@ -670,11 +729,12 @@ impl Handler<UpdateID> for ConsensusModule {
     }
 }
 
-impl Handler<AskIfLeader> for ConsensusModule {
-    type Result = bool;
+impl Handler<RoleChanged> for ConsensusModule {
+    type Result = ();
 
-    fn handle(&mut self, _msg: AskIfLeader, _ctx: &mut Self::Context) -> bool {
-        self.state == State::Leader
+    fn handle(&mut self, _msg: RoleChanged, _ctx: &mut Self::Context) -> Self::Result {
+        log!("Role change acked by {}.", _msg.id);
+        self.increment_ack();
     }
 }
 

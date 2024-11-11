@@ -129,3 +129,10 @@ pub struct UpdateID {
     pub new_id: String,
     pub expects_leader: bool,
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+/// Message representing the change of role of a node
+pub struct RoleChanged {
+    pub id: String,
+}

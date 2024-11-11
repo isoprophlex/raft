@@ -1,34 +1,45 @@
 use crate::backend::ConsensusModule;
-use crate::messages::{AskIfLeader, NewConnection};
+use crate::messages::{NewConnection};
 use crate::node_config::NodesConfig;
 use actix::{Addr, AsyncContext, Context};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, Receiver};
 use tokio::net::TcpListener;
 use utils_lib::*;
 
 const MINIMUM_AMOUNT_FOR_ELECTION: usize = 2;
+pub const PORT_OFFSET: usize = 2000;
+
+/// RaftModule is the main struct that will be used to start the Raft consensus algorithm.
 pub struct RaftModule {
     node_id: String,
     ip: String,
     port: usize,
-    address: Option<Addr<ConsensusModule>>,
+    address: Option<Addr<ConsensusModule>>
 }
 
+/// Implementation of RaftModule
 impl RaftModule {
+    /// Creates a new RaftModule.
     pub fn new(node_id: String, ip: String, port: usize) -> Self {
         RaftModule {
             node_id,
             ip,
             port,
-            address: None,
+            address: None
         }
     }
 
+    /// Starts the RaftModule. This function will start the connections with the other nodes and listen for incoming connections.
+    /// It will also start the election timer if the node is the second to go live.
+    /// Elections need at least 2 nodes to start.
+    /// wait_for_acks will be false only in local testing instances
     pub async fn start(
         &mut self,
         nodes_config: NodesConfig,
         timestamp_dir: Option<&str>,
         sender: Sender<bool>,
+        receiver: Receiver<bool>,
+        wait_for_acks: bool
     ) {
         let node_id = self.node_id.clone();
 
@@ -42,6 +53,8 @@ impl RaftModule {
             nodes_config_copy,
             timestamp_dir,
             sender,
+            receiver,
+            wait_for_acks
         )
         .await;
 
@@ -56,12 +69,13 @@ impl RaftModule {
 
         self.address = Some(ctx.address());
 
-        let last_node = nodes_config
+        let runner_node = nodes_config
             .nodes
             .get(MINIMUM_AMOUNT_FOR_ELECTION - 1)
             .unwrap();
 
-        if self.ip == last_node.ip && self.port == last_node.port.parse().unwrap() {
+        // If it's my turn to start the election timer, I will start it.
+        if self.ip == runner_node.ip && self.port == runner_node.port.parse().unwrap() {
             log!("Running election timer");
             backend.run_election_timer();
         }
@@ -70,18 +84,21 @@ impl RaftModule {
         join.await.expect("Error in join.await");
     }
 
+    /// Listens for incoming connections.
+    /// This function will listen for incoming connections and send them to the ConsensusModule (backend) with the Message NewConnection.
+    /// The backend will handle the new connection.
     pub async fn listen_for_connections(
         node_id: String,
         ip: String,
         port: usize,
         ctx_task: Addr<ConsensusModule>,
     ) {
-        let port = port + 3000;
+        let port = port + PORT_OFFSET;
         let listener = TcpListener::bind(format!("{}:{}", ip, port))
             .await
             .expect("Failed to bind listener");
 
-        log!("Node {} is listening on {}:{}", ip, node_id, port);
+        log!("Node {} is listening on {}:{}", node_id, ip, port);
 
         loop {
             match listener.accept().await {
