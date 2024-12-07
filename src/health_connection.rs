@@ -56,7 +56,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                 term: term as usize,
                             });
                         } else {
-                            log!("Backend actor is not available");
+                            log!("Backend actor is not available to handle RV");
                         }
                     }
                 }
@@ -68,7 +68,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                 term: term.into(),
                             });
                         } else {
-                            log!("Backend actor is not available");
+                            log!("Backend actor is not available to handle VOTE");
                         }
                     }
                 }
@@ -122,7 +122,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                 term: term as usize,
                             });
                         } else {
-                            log!("Backend actor is not available");
+                            log!("Backend actor is not available to handle NL");
                         }
                     }
                 }
@@ -139,7 +139,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                 port,
                             });
                         } else {
-                            log!("Backend actor is not available");
+                            log!("Backend actor is not available to handle RC");
                         }
                     }
                 }
@@ -150,7 +150,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                 .clone()
                                 .try_send(ConnectionDown { id: node_id });
                         } else {
-                            log!("Backend actor is not available");
+                            log!("Backend actor is not available to handle CD");
                         }
                     }
                 }
@@ -161,7 +161,7 @@ impl StreamHandler<Result<String, std::io::Error>> for HealthConnection {
                                 id: node_id,
                             });
                         } else {
-                            log!("Backend actor is not available");
+                            log!("Backend actor is not available to handle R");
                         }
                     }
                 }
