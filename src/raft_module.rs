@@ -66,6 +66,7 @@ impl RaftModule {
         ));
         backend.add_myself(ctx.address());
         backend.add_me_to_connections(ctx.address()).await;
+        backend.handshake_nodes();
 
         self.address = Some(ctx.address());
 

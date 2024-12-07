@@ -174,15 +174,6 @@ impl ConsensusModule {
             log_green!("Node {} connected to Node {}", self_id, node_id);
 
             let actor_addr = HealthConnection::create_actor(stream, node_id.clone());
-            if let Err(e) = actor_addr.try_send(ID {
-                ip: self_ip.clone(),
-                port: self_port,
-                id: self_id.clone(),
-                just_arrived: true,
-            }) {
-                log!("Error sending ID to node {}: {}", node_id, e);
-                continue;
-            }
             connection_map.insert(node_id.clone(), actor_addr);
         }
         Self {
@@ -203,6 +194,19 @@ impl ConsensusModule {
             receiver,
             wait_for_acks,
             acks_received: 0,
+        }
+    }
+
+    pub fn handshake_nodes(&mut self) {
+        for actor in self.connection_map.values() {
+            if let Err(e) = actor.try_send(ID {
+                ip: self.ip.clone(),
+                port: self.port,
+                id: self.node_id.clone(),
+                just_arrived: true,
+            }) {
+                log!("Error sending ID to connection: {}", e);
+            }
         }
     }
 
