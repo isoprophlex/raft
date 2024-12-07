@@ -565,6 +565,11 @@ impl Handler<NewLeader> for ConsensusModule {
 
     /// The node receives a NewLeader message and updates its state accordingly.
     fn handle(&mut self, msg: NewLeader, _ctx: &mut Self::Context) -> Self::Result {
+        if self.leader_id == Some(msg.id.clone()) {
+            return
+        }
+        
+        log_blue!("New leader is {}", msg.id);
         self.leader_id = Some(msg.id.clone());
         if self.leader_id != Some(self.node_id.clone()) {
             self.state = Follower;
@@ -576,7 +581,6 @@ impl Handler<NewLeader> for ConsensusModule {
         if self.current_term < msg.term {
             self.current_term = msg.term;
         }
-        log_blue!("New leader is {}", msg.id);
         self.start_heartbeat_check(_ctx);
     }
 }
