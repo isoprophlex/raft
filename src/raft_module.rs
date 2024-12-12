@@ -70,13 +70,8 @@ impl RaftModule {
 
         self.address = Some(ctx.address());
 
-        let runner_node = nodes_config
-            .nodes
-            .get(MINIMUM_AMOUNT_FOR_ELECTION - 1)
-            .unwrap();
-
         // If it's my turn to start the election timer, I will start it.
-        if self.ip == runner_node.ip && self.port == runner_node.port.parse().unwrap() {
+        if backend.connection_map.len() == MINIMUM_AMOUNT_FOR_ELECTION - 1 {
             log!("Running election timer");
             backend.run_election_timer();
         }
