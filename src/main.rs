@@ -30,22 +30,22 @@ async fn main() {
         nodes: vec![
             Node {
                 ip: "127.0.0.1".to_string(),
-                port: "5433".to_string(),
+                port: "3333".to_string(),
                 name: "node1".to_string(),
             },
             Node {
                 ip: "127.0.0.1".to_string(),
-                port: "5434".to_string(),
+                port: "3334".to_string(),
                 name: "node2".to_string(),
             },
             Node {
                 ip: "127.0.0.1".to_string(),
-                port: "5435".to_string(),
+                port: "3335".to_string(),
                 name: "node3".to_string(),
             },
             Node {
                 ip: "127.0.0.1".to_string(),
-                port: "5436".to_string(),
+                port: "3336".to_string(),
                 name: "node4".to_string(),
             },
         ],
